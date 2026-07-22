@@ -89,6 +89,10 @@ resource "aws_autoscaling_group" "nat" {
   vpc_zone_identifier = [var.public_subnet_id]
   health_check_type   = "EC2"
 
+  # Proactively replace Spot instances at elevated interruption risk
+  # (complements the EventBridge failover Lambda in failover.tf).
+  capacity_rebalance = var.use_spot
+
   mixed_instances_policy {
     launch_template {
       launch_template_specification {
@@ -104,9 +108,9 @@ resource "aws_autoscaling_group" "nat" {
       }
     }
 
-    # Static toggle: use_spot flips 100% Spot vs 100% On-Demand. True
-    # Spot-exhaustion fallback is a separate, harder problem, out of
-    # scope here.
+    # use_spot flips 100% Spot vs 100% On-Demand. Spot-exhaustion
+    # fallback (spot_fallback.tf) can flip to On-Demand at runtime when
+    # zero instances stay InService.
     instances_distribution {
       spot_allocation_strategy                 = "price-capacity-optimized"
       on_demand_base_capacity                  = var.use_spot ? 0 : 1

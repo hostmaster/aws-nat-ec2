@@ -34,3 +34,13 @@ output "eventbridge_rule_arn" {
   description = "ARN of the Spot-interruption-warning EventBridge rule."
   value       = aws_cloudwatch_event_rule.spot_interruption.arn
 }
+
+output "spot_fallback_lambda_arn" {
+  description = "ARN of the Spot-exhaustion fallback Lambda (null when use_spot is false or spot_on_demand_fallback is false)."
+  value       = length(aws_lambda_function.spot_fallback) > 0 ? aws_lambda_function.spot_fallback[0].arn : null
+}
+
+output "spot_fallback_alarm_arn" {
+  description = "ARN of the CloudWatch alarm that triggers Spot-exhaustion fallback (null when disabled)."
+  value       = length(aws_cloudwatch_metric_alarm.spot_fallback) > 0 ? aws_cloudwatch_metric_alarm.spot_fallback[0].arn : null
+}

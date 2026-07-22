@@ -60,6 +60,34 @@ variable "use_spot" {
   default     = true
 }
 
+variable "spot_on_demand_fallback" {
+  type        = bool
+  description = "When use_spot is true, flip the ASG to 100% On-Demand via a CloudWatch alarm and Lambda if zero instances stay InService (Spot exhaustion). Ignored when use_spot is false."
+  default     = true
+}
+
+variable "spot_fallback_alarm_period_seconds" {
+  type        = number
+  description = "CloudWatch alarm period (seconds) for Spot-exhaustion fallback. Only used when use_spot and spot_on_demand_fallback are true."
+  default     = 120
+
+  validation {
+    condition     = var.spot_fallback_alarm_period_seconds >= 60 && var.spot_fallback_alarm_period_seconds <= 86400
+    error_message = "spot_fallback_alarm_period_seconds must be between 60 and 86400."
+  }
+}
+
+variable "spot_fallback_alarm_evaluation_periods" {
+  type        = number
+  description = "Consecutive breaching periods before Spot-exhaustion fallback runs. Only used when use_spot and spot_on_demand_fallback are true."
+  default     = 2
+
+  validation {
+    condition     = var.spot_fallback_alarm_evaluation_periods >= 1 && var.spot_fallback_alarm_evaluation_periods <= 10
+    error_message = "spot_fallback_alarm_evaluation_periods must be between 1 and 10."
+  }
+}
+
 variable "eip_allocation_id" {
   type        = string
   description = "Bring-your-own EIP allocation ID. If null, the module allocates a new EIP."

@@ -20,8 +20,12 @@ and needs replacing.
   Managed NAT Gateway for one or more private subnets in a single AZ.
 - Run on AL2023 (standard public AMI, resolved via SSM Parameter Store —
   no custom AMI baking unless later proven unavoidable).
-- Support both On-Demand and Spot capacity, with automatic fallback from
-  Spot to On-Demand when Spot capacity is unavailable.
+- Support both On-Demand and Spot capacity. When `use_spot = true`, prefer
+  Spot via the Mixed Instances Policy; when Spot capacity is unavailable
+  across every configured pool in the AZ, fall back to On-Demand via an
+  explicit safety net (CloudWatch alarm + Lambda policy flip — see §5.5).
+  A static `use_spot = false` toggle remains available
+  for callers who want 100% On-Demand without the fallback machinery.
 - Support both x86_64 and arm64 (Graviton) architectures.
 - Minimize downtime on Spot interruption via proactive replacement
   (EventBridge spot-interruption-warning → Lambda → ASG), in addition to
@@ -86,8 +90,10 @@ and needs replacing.
   instance type(s), IAM instance profile, security group, user-data
   bootstrap script, `network_interfaces.source_dest_check = false`.
 - **Auto Scaling Group** — `min=max=desired=1`, single public subnet,
-  EC2 status check health check, optional Mixed Instances Policy
-  (Spot with On-Demand fallback).
+  EC2 status check health check, Mixed Instances Policy (Spot when
+  `use_spot = true`, 100% On-Demand when `use_spot = false`). Spot
+  exhaustion fallback per §5.5 when `spot_on_demand_fallback = true`
+  (the default).
 - **Elastic IP** — allocated by the module by default (see §10 for the
   bring-your-own alternative), reassociated to the current instance by
   the boot script.
@@ -106,6 +112,9 @@ and needs replacing.
   and use SSM Session Manager.
 - **EventBridge Rule + Lambda + Lambda IAM Role** — proactive failover on
   Spot interruption warning (see §5.2).
+- **CloudWatch Alarm + Fallback Lambda + Lambda IAM Role** — Spot
+  exhaustion fallback to On-Demand (see §5.5). Omitted when `use_spot =
+  false` or `spot_on_demand_fallback = false`.
 
 ### 4.3 Networking / data flow
 
@@ -172,7 +181,33 @@ per §3).
   `ec2:AssociateAddress`, using its own IAM instance-profile permissions.
   No Lambda or external orchestrator is involved in this step.
 
-### 5.4 Route table continuity
+### 5.5 Spot exhaustion fallback (T21)
+
+When `use_spot = true`, the ASG targets 100% Spot
+(`on_demand_percentage_above_base_capacity = 0`). AWS does **not**
+natively substitute On-Demand when every configured Spot pool in the AZ
+is empty — the ASG keeps retrying Spot. For `desired = 1`, that leaves
+private subnets without egress until Spot capacity returns.
+
+**Mechanism** (see [spot-on-demand-fallback.md](spot-on-demand-fallback.md)):
+
+1. A **CloudWatch alarm** fires when `GroupInServiceInstances < 1` for a
+   sustained period while Spot-only policy is active
+   (`spot_on_demand_fallback = true`, the default).
+2. A **fallback Lambda** (`scripts/lambda_spot_fallback.py`) calls
+   `UpdateAutoScalingGroup` to set `OnDemandPercentageAboveBaseCapacity =
+   100`, forcing the next launch as On-Demand. It skips the flip while
+   instances are still `Pending`, to avoid false positives during normal
+   proactive failover (§5.2).
+3. The new instance's bootstrap script performs the same EIP + route
+   table steps as in §5.1.
+
+This is distinct from §5.2 (Spot *interruption*) and from toggling
+`use_spot = false` (static config change). Revert to Spot after
+exhaustion is **operator/Terraform-driven**; automatic revert is out of
+scope.
+
+### 5.6 Route table continuity
 
 - The bootstrap script, using the instance's own IAM role, calls
   `ec2:ReplaceRoute` for each route table ID in `private_route_table_ids`,
@@ -226,9 +261,13 @@ instance ID and region entirely via IMDSv2 (`/latest/meta-data/...`),
 never the EC2 API, so there's no self-lookup call to authorize
 (confirmed while implementing T8, 2026-07-22).
 
-**Failover Lambda role**:
+**Failover Lambda role** (proactive Spot interruption — §5.2):
 - `autoscaling:TerminateInstanceInAutoScalingGroup`
 - `autoscaling:DescribeAutoScalingGroups`
+- `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
+
+**Spot fallback Lambda role** (§5.5):
+- `autoscaling:UpdateAutoScalingGroup` (scoped to this ASG's ARN)
 - `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 
 ## 8. Deployment Assumptions
@@ -248,9 +287,12 @@ never the EC2 API, so there's no self-lookup call to authorize
 
 ## 9. Edge Cases
 
-- **Spot capacity unavailable:** ASG mixed-instances policy falls back
-  to On-Demand automatically when Spot capacity can't be fulfilled for
-  any of the candidate `instance_types`.
+- **Spot capacity unavailable:** AWS Mixed Instances Policy does **not**
+  fall back to On-Demand automatically — the ASG retries Spot pools
+  only. **Implemented (T21):** explicit safety net (see §5.5 and
+  [spot-on-demand-fallback.md](spot-on-demand-fallback.md)). Widening
+  `instance_types` and ASG capacity rebalancing reduce but do not
+  eliminate this risk.
 - **Spot interruption warning fires:** handled proactively per §5.2.
 - **Instance fails EC2 status checks (non-Spot cause):** handled
   reactively per §5.1.
@@ -457,6 +499,7 @@ continuously — treat as directional, not exact.
 | EBS root volume (gp3, ~8GB) | ~$0.75-0.80/mo | Negligible; scales with `root_block_device` size if ever made configurable. |
 | **Elastic IP (persistent)** | **$3.60/mo flat** | **Important, not in the original SPEC interview:** since Feb 2024, AWS charges $0.005/hr for *every* public IPv4 address, attached or not — this is no longer the pre-2024 "free while attached to a running instance" model. This EIP cost is now often **larger than the Spot compute cost itself**, and it is *not* optional/skippable for the module's core persistent-IP goal (§2, §5.3). |
 | Failover Lambda | ~$0/mo | Comfortably inside the *permanent* free tier (1M requests + 400,000 GB-s/mo) — Spot interruptions are rare events, nowhere close to that volume. |
+| Spot fallback Lambda + alarm | ~$0/mo | Same negligible volume as failover Lambda; alarm on a single ASG metric. |
 | EventBridge rule | ~$0/mo | Negligible event volume for this pattern. |
 | CloudWatch Logs (Lambda) | ~$0/mo (cents) | Tiny log volume. |
 | ASG, Launch Template, Security Group, IAM role/profile/policy | $0/mo | No direct AWS charge for these resource types. |
