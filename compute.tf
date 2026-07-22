@@ -27,6 +27,8 @@ locals {
     ? var.instance_types
     : local.instance_types_by_architecture[var.architecture]
   )
+
+  spot_fallback_enabled = var.use_spot && var.spot_on_demand_fallback
 }
 
 resource "aws_launch_template" "nat" {
@@ -88,6 +90,11 @@ resource "aws_autoscaling_group" "nat" {
   desired_capacity    = 1
   vpc_zone_identifier = [var.public_subnet_id]
   health_check_type   = "EC2"
+
+  # GroupInServiceInstances is opt-in; required by the Spot-exhaustion
+  # fallback alarm (spot_fallback.tf). Without this, the metric never
+  # publishes and treat_missing_data would false-alarm every deployment.
+  enabled_metrics = local.spot_fallback_enabled ? ["GroupInServiceInstances"] : []
 
   # Proactively replace Spot instances at elevated interruption risk
   # (complements the EventBridge failover Lambda in failover.tf).

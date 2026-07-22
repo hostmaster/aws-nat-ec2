@@ -1,9 +1,5 @@
 # spot_fallback.tf — CloudWatch alarm, fallback Lambda, Lambda IAM role.
 
-locals {
-  spot_fallback_enabled = var.use_spot && var.spot_on_demand_fallback
-}
-
 data "archive_file" "lambda_spot_fallback" {
   count = local.spot_fallback_enabled ? 1 : 0
 
@@ -100,8 +96,10 @@ resource "aws_cloudwatch_metric_alarm" "spot_fallback" {
   period              = var.spot_fallback_alarm_period_seconds
   statistic           = "Minimum"
   threshold           = 1
-  treat_missing_data  = "breaching"
-  alarm_description   = "NAT ASG has zero InService instances while Spot-only; flip to On-Demand."
+  # Missing != zero InService; only an explicit published value < 1
+  # should trigger fallback (avoids false alarms before metrics warm up).
+  treat_missing_data = "notBreaching"
+  alarm_description  = "NAT ASG has zero InService instances while Spot-only; flip to On-Demand."
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.nat.name

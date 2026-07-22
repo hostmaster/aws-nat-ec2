@@ -101,6 +101,7 @@ terminate instances. No conflict with the existing failover Lambda.
 | Resource | File | Purpose |
 |----------|------|---------|
 | CloudWatch alarm | `spot_fallback.tf` | `GroupInServiceInstances < 1` while Spot-only |
+| ASG `enabled_metrics` | `compute.tf` | Publishes `GroupInServiceInstances` (opt-in in AWS; alarm has no data without it) |
 | Fallback Lambda | `scripts/lambda_spot_fallback.py` | Idempotent `UpdateAutoScalingGroup` |
 | Lambda IAM role | `spot_fallback.tf` | `autoscaling:UpdateAutoScalingGroup` scoped to this ASG ARN |
 | Alarm target | `spot_fallback.tf` | CloudWatch alarm → Lambda |

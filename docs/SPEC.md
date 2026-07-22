@@ -193,7 +193,9 @@ private subnets without egress until Spot capacity returns.
 
 1. A **CloudWatch alarm** fires when `GroupInServiceInstances < 1` for a
    sustained period while Spot-only policy is active
-   (`spot_on_demand_fallback = true`, the default).
+   (`spot_on_demand_fallback = true`, the default). The ASG must publish
+   this metric via `enabled_metrics` (set in `compute.tf` when fallback
+   is enabled — it is opt-in per AWS).
 2. A **fallback Lambda** (`scripts/lambda_spot_fallback.py`) calls
    `UpdateAutoScalingGroup` to set `OnDemandPercentageAboveBaseCapacity =
    100`, forcing the next launch as On-Demand. It skips the flip while
