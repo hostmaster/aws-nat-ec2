@@ -6,3 +6,5 @@
 __pycache__/
 *.pyc
 *.md
+!README.md
+.DS_Store
