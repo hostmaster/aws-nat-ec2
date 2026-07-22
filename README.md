@@ -1,4 +1,4 @@
-# terraform-aws-nat-instance-al2023
+# aws-nat-ec2
 
 A self-hosted, Spot-capable, AL2023-based NAT instance — a cheaper
 alternative to AWS Managed NAT Gateway for outbound-only internet access
