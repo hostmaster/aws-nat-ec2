@@ -27,8 +27,6 @@ locals {
     ? var.instance_types
     : local.instance_types_by_architecture[var.architecture]
   )
-
-  spot_fallback_enabled = var.use_spot && var.spot_on_demand_fallback
 }
 
 resource "aws_launch_template" "nat" {

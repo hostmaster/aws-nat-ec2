@@ -1,5 +1,9 @@
 # spot_fallback.tf — CloudWatch alarm, fallback Lambda, Lambda IAM role.
 
+locals {
+  spot_fallback_enabled = var.use_spot && var.spot_on_demand_fallback
+}
+
 data "archive_file" "lambda_spot_fallback" {
   count = local.spot_fallback_enabled ? 1 : 0
 

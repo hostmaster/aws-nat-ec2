@@ -13,8 +13,7 @@ Highlights:
 - Spot capacity by default, with reactive (ASG replacement) and
   proactive (Spot-interruption-warning → Lambda) failover.
 - Spot exhaustion fallback: CloudWatch alarm + Lambda flips the ASG to
-  On-Demand when zero instances stay InService (see
-  [docs/spot-on-demand-fallback.md](docs/spot-on-demand-fallback.md)).
+  On-Demand when zero instances stay InService (SPEC §5.5).
 - The public IP stays the same across every instance replacement.
 - SSM Session Manager only — no SSH, no key pairs, no bastion host.
 

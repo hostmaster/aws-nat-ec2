@@ -189,7 +189,7 @@ natively substitute On-Demand when every configured Spot pool in the AZ
 is empty — the ASG keeps retrying Spot. For `desired = 1`, that leaves
 private subnets without egress until Spot capacity returns.
 
-**Mechanism** (see [spot-on-demand-fallback.md](spot-on-demand-fallback.md)):
+**Mechanism:**
 
 1. A **CloudWatch alarm** fires when `GroupInServiceInstances < 1` for a
    sustained period while Spot-only policy is active
@@ -208,6 +208,24 @@ This is distinct from §5.2 (Spot *interruption*) and from toggling
 `use_spot = false` (static config change). Revert to Spot after
 exhaustion is **operator/Terraform-driven**; automatic revert is out of
 scope.
+
+**Why a CloudWatch alarm, not an EventBridge launch-failure event:** the
+native alternative is EventBridge's `EC2 Instance Launch Unsuccessful`
+(source `aws.autoscaling`) — the same style of signal already used for
+`EC2 Spot Instance Interruption Warning` in §5.2. It's rejected here
+because it fires per failed launch attempt across every Spot pool the
+ASG retries, not once per sustained-exhaustion episode, and AWS re:Post
+confirms these events can be delayed or absent during retries. A
+"zero InService instances" alarm over a sustained window gives that
+debounce for free, at the cost of detection latency.
+
+**`capacity_rebalance = var.use_spot`** (`compute.tf`) is complementary:
+with `max = 1` the ASG has no headroom to pre-launch a replacement
+before terminating the flagged instance, so it can't get the full
+zero-downtime benefit capacity rebalancing usually provides. It still
+helps because it reacts to the earlier *rebalance recommendation*
+signal, ahead of the 2-minute interruption warning §5.2's Lambda waits
+for.
 
 ### 5.6 Route table continuity
 
@@ -291,8 +309,7 @@ never the EC2 API, so there's no self-lookup call to authorize
 
 - **Spot capacity unavailable:** AWS Mixed Instances Policy does **not**
   fall back to On-Demand automatically — the ASG retries Spot pools
-  only. **Implemented (T21):** explicit safety net (see §5.5 and
-  [spot-on-demand-fallback.md](spot-on-demand-fallback.md)). Widening
+  only. **Implemented (T21):** explicit safety net (see §5.5). Widening
   `instance_types` and ASG capacity rebalancing reduce but do not
   eliminate this risk.
 - **Spot interruption warning fires:** handled proactively per §5.2.

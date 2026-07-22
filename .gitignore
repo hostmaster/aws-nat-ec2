@@ -8,5 +8,4 @@ __pycache__/
 *.md
 !README.md
 !docs/SPEC.md
-!docs/spot-on-demand-fallback.md
 .DS_Store
