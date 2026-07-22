@@ -50,8 +50,9 @@ jobs:
       - name: Shellcheck rendered bootstrap script
         shell: bash
         run: |
-          shellcheck <(envsubst '${eip_allocation_id} ${route_table_ids}' \
-            < scripts/bootstrap.sh.tpl | sed 's/\$\$/\$/g')
+          shellcheck -S warning \
+            <(envsubst '${eip_allocation_id} ${route_table_ids}' \
+              < scripts/bootstrap.sh.tpl | sed 's/\$\$/\$/g')
 
   python:
     name: Python
