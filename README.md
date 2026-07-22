@@ -15,7 +15,7 @@ Highlights:
 - The public IP stays the same across every instance replacement.
 - SSM Session Manager only — no SSH, no key pairs, no bastion host.
 
-Inputs and outputs are documented below. See [SPEC.md](SPEC.md) for the
+Inputs and outputs are documented below. See [SPEC.md](docs/SPEC.md) for the
 full design rationale, IAM permissions (§7.3), and the runnable manual
 verification plan (§13).
 
