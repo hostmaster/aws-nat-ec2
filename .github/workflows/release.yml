@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows:
+      - Lint
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    # Only cut a release when Lint passed on a direct push to main (e.g. merged PR).
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    steps:
+      - name: Checkout vetted commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Bump patch version and create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if git tag --points-at HEAD | grep -qE '^v[0-9]'; then
+            echo "Commit $(git rev-parse --short HEAD) is already tagged; skipping release."
+            exit 0
+          fi
+
+          latest="$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)"
+          if [[ -z "${latest}" ]]; then
+            new_tag="v0.1.0"
+          else
+            version="${latest#v}"
+            IFS='.' read -r major minor patch <<< "${version}"
+            if [[ -z "${major}" || -z "${minor}" || -z "${patch}" ]]; then
+              echo "Latest tag ${latest} is not semver (expected vMAJOR.MINOR.PATCH); aborting."
+              exit 1
+            fi
+            new_tag="v${major}.${minor}.$((patch + 1))"
+          fi
+
+          if git rev-parse "${new_tag}" >/dev/null 2>&1; then
+            echo "Tag ${new_tag} already exists; skipping release."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "${new_tag}" -m "Release ${new_tag}"
+          git push origin "${new_tag}"
+
+          gh release create "${new_tag}" \
+            --title "${new_tag}" \
+            --generate-notes \
+            --target "${{ github.event.workflow_run.head_sha }}"
+
+          echo "Released ${new_tag} at ${{ github.event.workflow_run.head_sha }}"
