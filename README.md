@@ -12,6 +12,8 @@ Highlights:
 - AL2023, resolved via the public SSM AMI parameter — no custom AMI.
 - Spot capacity by default, with reactive (ASG replacement) and
   proactive (Spot-interruption-warning → Lambda) failover.
+- Spot exhaustion fallback: CloudWatch alarm + Lambda flips the ASG to
+  On-Demand when zero instances stay InService (SPEC §5.5).
 - The public IP stays the same across every instance replacement.
 - SSM Session Manager only — no SSH, no key pairs, no bastion host.
 
@@ -97,6 +99,9 @@ sensible default.
 | `architecture` | `string` | `"x86_64"` | `"x86_64"` or `"arm64"`. Drives AMI SSM parameter and default instance types. |
 | `instance_types` | `list(string)` | arch-based default (e.g. `["t3a.nano","t3.nano"]` or `["t4g.nano"]`) | Candidate instance types for the ASG mixed-instances policy. |
 | `use_spot` | `bool` | `true` | Whether to prefer Spot capacity. |
+| `spot_on_demand_fallback` | `bool` | `true` | When `use_spot` is true, flip to 100% On-Demand via alarm + Lambda if zero instances stay InService (Spot exhaustion). Ignored when `use_spot` is false. |
+| `spot_fallback_alarm_period_seconds` | `number` | `120` | CloudWatch alarm period for Spot-exhaustion fallback. |
+| `spot_fallback_alarm_evaluation_periods` | `number` | `2` | Consecutive breaching periods before fallback runs. |
 | `eip_allocation_id` | `optional(string)` | `null` | Bring-your-own EIP allocation ID. If `null`, the module allocates a new EIP. |
 | `release_eip_on_destroy` | `bool` | `true` | Whether the module-allocated EIP is released on `terraform destroy`. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). |
 | `allow_inbound_cidrs` | `list(string)` | `[]` | Optional additional ingress CIDRs on the NAT security group, beyond the default (no inbound from the internet). |
@@ -113,3 +118,11 @@ sensible default.
 | `iam_role_arn` | ARN of the NAT instance's IAM role. |
 | `failover_lambda_arn` | ARN of the proactive-failover Lambda function. |
 | `eventbridge_rule_arn` | ARN of the Spot-interruption-warning EventBridge rule. |
+| `spot_fallback_lambda_arn` | ARN of the Spot-exhaustion fallback Lambda (`null` when fallback is disabled). |
+| `spot_fallback_alarm_arn` | ARN of the CloudWatch alarm for Spot-exhaustion fallback (`null` when disabled). |
+
+**Note:** if the fallback Lambda flips the live ASG to On-Demand at
+runtime, Terraform state still shows Spot-only until you apply a config
+change. To persist On-Demand after fallback, set `use_spot = false` and
+apply. A blind `terraform apply` with `use_spot = true` resets the ASG
+back to Spot-only.

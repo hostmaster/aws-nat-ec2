@@ -1,4 +1,5 @@
-# iam.tf — NAT instance role/profile and policies. Lambda role is failover.tf.
+# iam.tf — NAT instance role/profile and policies. Lambda roles are in
+# failover.tf and spot_fallback.tf.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
