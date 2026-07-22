@@ -15,9 +15,9 @@ Highlights:
 - The public IP stays the same across every instance replacement.
 - SSM Session Manager only — no SSH, no key pairs, no bastion host.
 
-See [SPEC.md](SPEC.md) for the full design rationale, the complete
-input/output reference (§7.1/§7.2), IAM permissions (§7.3), and the
-runnable manual verification plan (§13).
+Inputs and outputs are documented below. See [SPEC.md](SPEC.md) for the
+full design rationale, IAM permissions (§7.3), and the runnable manual
+verification plan (§13).
 
 ## Architecture
 
@@ -68,7 +68,7 @@ inputs = {
   private_route_table_ids = [dependency.subnets.outputs.private_route_table_ids[0]]
 
   # Optional — shown at their defaults for clarity; omit any of these
-  # to use the default. See SPEC.md §7.1 for the full list.
+  # to use the default. See the Inputs table below for the full list.
   architecture        = "x86_64" # or "arm64"
   use_spot            = true
   allow_inbound_cidrs = []
@@ -82,13 +82,34 @@ For a second AZ, add a second Terragrunt unit calling this same module
 with that AZ's `public_subnet_id`/`private_route_table_ids` — this
 module deliberately has no multi-AZ logic of its own (SPEC §3/§4.1).
 
-## Inputs and outputs
-
-Full tables, with types, defaults, and descriptions: [SPEC.md §7.1
-(Inputs)](SPEC.md#71-inputs) and [SPEC.md §7.2
-(Outputs)](SPEC.md#72-outputs). Not duplicated here to avoid the two
-copies drifting out of sync — SPEC.md is the source of truth.
+## Inputs
 
 At minimum, every module call must supply `name_prefix`, `vpc_id`,
 `public_subnet_id`, and `private_route_table_ids`; everything else has a
 sensible default.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `name_prefix` | `string` | — (required) | Prefix for resource names and tags. Must be 20 characters or fewer (validated) — combined with this module's own resource-name suffixes and Terraform's `name_prefix` random suffix, a longer value can exceed AWS's 64-character limit on EventBridge rule / IAM role names. |
+| `vpc_id` | `string` | — (required) | Existing VPC ID. |
+| `public_subnet_id` | `string` | — (required) | Existing public subnet the NAT instance runs in. AZ is derived from this subnet. |
+| `private_route_table_ids` | `list(string)` | — (required) | Route table IDs to repoint at the active NAT instance. |
+| `architecture` | `string` | `"x86_64"` | `"x86_64"` or `"arm64"`. Drives AMI SSM parameter and default instance types. |
+| `instance_types` | `list(string)` | arch-based default (e.g. `["t3a.nano","t3.nano"]` or `["t4g.nano"]`) | Candidate instance types for the ASG mixed-instances policy. |
+| `use_spot` | `bool` | `true` | Whether to prefer Spot capacity. |
+| `eip_allocation_id` | `optional(string)` | `null` | Bring-your-own EIP allocation ID. If `null`, the module allocates a new EIP. |
+| `release_eip_on_destroy` | `bool` | `true` | Whether the module-allocated EIP is released on `terraform destroy`. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). |
+| `allow_inbound_cidrs` | `list(string)` | `[]` | Optional additional ingress CIDRs on the NAT security group, beyond the default (no inbound from the internet). |
+| `tags` | `map(string)` | `{}` | Additional tags applied to all resources. |
+
+## Outputs
+
+| Output | Description |
+|---|---|
+| `nat_instance_asg_name` | Name of the Auto Scaling Group. |
+| `nat_instance_security_group_id` | Security Group ID attached to the NAT instance. |
+| `eip_public_ip` | The persistent public IP address. |
+| `eip_allocation_id` | Allocation ID of the EIP in use (module-created or BYO passthrough). |
+| `iam_role_arn` | ARN of the NAT instance's IAM role. |
+| `failover_lambda_arn` | ARN of the proactive-failover Lambda function. |
+| `eventbridge_rule_arn` | ARN of the Spot-interruption-warning EventBridge rule. |
