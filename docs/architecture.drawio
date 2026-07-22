@@ -1,0 +1,168 @@
+<mxfile host="app.diagrams.net" agent="aws-nat-ec2" version="24.7.0" type="device">
+  <diagram id="aws-nat-ec2-architecture" name="Architecture">
+    <mxGraphModel dx="1400" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1650" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title1" value="aws-nat-ec2 &#8212; runtime architecture" style="text;html=1;fontSize=16;fontStyle=1;fontColor=#232F3E;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="8" width="500" height="26" as="geometry" />
+        </mxCell>
+
+        <!-- AWS Cloud -->
+        <mxCell id="cloud1" value="AWS Cloud" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=13;fontStyle=0;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud_alt;strokeColor=#232F3E;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#232F3E;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1300" height="640" as="geometry" />
+        </mxCell>
+
+        <!-- AWS Region -->
+        <mxCell id="region1" value="AWS Region" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=13;fontStyle=0;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_region;strokeColor=#147EBA;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#147EBA;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="90" width="1240" height="560" as="geometry" />
+        </mxCell>
+
+        <!-- VPC -->
+        <mxCell id="vpc1" value="Virtual Private Cloud (VPC) &#8212; existing" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=13;fontStyle=0;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc2;strokeColor=#248814;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#248814;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="100" y="140" width="860" height="480" as="geometry" />
+        </mxCell>
+
+        <!-- Availability Zone -->
+        <mxCell id="az1" value="Availability Zone" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=13;fontStyle=0;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_availability_zone;strokeColor=#248814;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#248814;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="130" y="190" width="800" height="400" as="geometry" />
+        </mxCell>
+
+        <!-- Private subnet -->
+        <mxCell id="subnetPriv1" value="Private subnet &#8212; existing" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_private_subnet;strokeColor=#147EBA;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#147EBA;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="160" y="240" width="250" height="320" as="geometry" />
+        </mxCell>
+
+        <!-- Public subnet -->
+        <mxCell id="subnetPub1" value="Public subnet &#8212; existing" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_public_subnet;strokeColor=#D05C17;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#D05C17;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="440" y="240" width="460" height="320" as="geometry" />
+        </mxCell>
+
+        <!-- Private workloads (generic instances, existing) -->
+        <mxCell id="workloads1" value="Private workloads&lt;br&gt;(existing)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#ED7100;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.instances;" vertex="1" parent="1">
+          <mxGeometry x="235" y="290" width="78" height="78" as="geometry" />
+        </mxCell>
+
+        <!-- Private route table (existing) -->
+        <mxCell id="rt1" value="Private route table&lt;br&gt;0.0.0.0/0&lt;br&gt;(existing)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.route_table;" vertex="1" parent="1">
+          <mxGeometry x="235" y="450" width="78" height="78" as="geometry" />
+        </mxCell>
+
+        <!-- Auto Scaling group (created) -->
+        <mxCell id="asg1" value="Amazon EC2 Auto Scaling group&lt;br&gt;Desired capacity: 1&lt;br&gt;(created by aws-nat-ec2)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=1;container=0;pointerEvents=1;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_auto_scaling_group;strokeColor=#ED7100;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#ED7100;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="470" y="300" width="230" height="200" as="geometry" />
+        </mxCell>
+
+        <!-- NAT instance (created) -->
+        <mxCell id="nat1" value="Amazon EC2&lt;br&gt;NAT instance&lt;br&gt;(created by aws-nat-ec2)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#ED7100;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.instance2;" vertex="1" parent="1">
+          <mxGeometry x="545" y="360" width="78" height="78" as="geometry" />
+        </mxCell>
+
+        <!-- Elastic IP (created) -->
+        <mxCell id="eip1" value="Elastic IP&lt;br&gt;(created by aws-nat-ec2)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.elastic_ip_address;" vertex="1" parent="1">
+          <mxGeometry x="760" y="360" width="78" height="78" as="geometry" />
+        </mxCell>
+
+        <!-- Internet Gateway (existing), straddling the VPC boundary -->
+        <mxCell id="igw1" value="Internet gateway&lt;br&gt;(existing)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.internet_gateway;" vertex="1" parent="1">
+          <mxGeometry x="922" y="350" width="76" height="76" as="geometry" />
+        </mxCell>
+
+        <!-- Internet (outside AWS Cloud) -->
+        <mxCell id="internet1" value="Internet" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#232F3E;fontColor=#232F3E;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="340" width="130" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Amazon EventBridge (created), outside VPC, inside Region -->
+        <mxCell id="eb1" value="Amazon EventBridge&lt;br&gt;(created by aws-nat-ec2)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#E7157B;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="250" width="78" height="78" as="geometry" />
+        </mxCell>
+
+        <!-- AWS Lambda "Spot failover" (created), outside VPC, inside Region -->
+        <mxCell id="lambda1" value="AWS Lambda&lt;br&gt;Spot failover&lt;br&gt;(created by aws-nat-ec2)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#ED7100;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda_function;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="420" width="78" height="78" as="geometry" />
+        </mxCell>
+
+        <!-- Note -->
+        <mxCell id="note1" value="On replacement, the instance re-associates the persistent Elastic IP&lt;br&gt;and updates private route tables." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#594300;fontSize=12;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=10;" vertex="1" parent="1">
+          <mxGeometry x="70" y="700" width="650" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="legend1" value="Legend&lt;br&gt;&#8226; (existing) &#8212; provided by the caller before this module runs (VPC, subnets, route tables, IGW, workloads)&lt;br&gt;&#8226; (created by aws-nat-ec2) &#8212; provisioned by this module (ASG, NAT instance, EIP, EventBridge, Lambda)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;fontColor=#232F3E;fontSize=11;align=left;verticalAlign=middle;spacingLeft=10;spacingRight=10;" vertex="1" parent="1">
+          <mxGeometry x="760" y="700" width="580" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Solid traffic flow: Private workloads -> route table -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#232F3E;fontColor=#232F3E;" edge="1" parent="1" source="workloads1" target="rt1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Solid traffic flow: route table -> NAT instance -->
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#232F3E;fontColor=#232F3E;" edge="1" parent="1" source="rt1" target="nat1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Solid traffic flow: NAT instance -> Internet Gateway. Exits below the ASG box (clear of its title text) and travels in its own lane under the Elastic IP box, so it never crosses either. -->
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#232F3E;fontColor=#232F3E;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="nat1" target="igw1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="584" y="515" />
+              <mxPoint x="960" y="515" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Solid traffic flow: Internet Gateway -> Internet -->
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#232F3E;fontColor=#232F3E;" edge="1" parent="1" source="igw1" target="internet1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Association: Elastic IP -> NAT instance (clean same-row line, now that e3 arches above this band) -->
+        <mxCell id="e5" value="associated with" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=none;endArrow=none;dashed=0;strokeColor=#8C4FFF;fontColor=#8C4FFF;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="eip1" target="nat1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Dashed control flow: EC2 Spot interruption warning -> EventBridge. Routed below the whole icon row, then up the outside-right of the EventBridge/Lambda column, entering EventBridge from its right (never crossing Lambda, which sits directly below EventBridge). -->
+        <mxCell id="e6" value="EC2 Spot interruption warning" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;endFill=0;dashed=1;strokeColor=#6A6A6A;fontColor=#6A6A6A;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="nat1" target="eb1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="584" y="575" />
+              <mxPoint x="1170" y="575" />
+              <mxPoint x="1170" y="289" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Dashed control flow: EventBridge -> Lambda -->
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;endFill=0;dashed=1;strokeColor=#6A6A6A;fontColor=#6A6A6A;" edge="1" parent="1" source="eb1" target="lambda1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Dashed control flow: Lambda -> Auto Scaling group. Routed below the icon row and its labels (a separate lane from e6, so the two dashed lines run parallel instead of crossing). -->
+        <mxCell id="e8" value="terminates instance in ASG" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;endFill=0;dashed=1;strokeColor=#6A6A6A;fontColor=#6A6A6A;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.8;entryDx=0;entryDy=0;" edge="1" parent="1" source="lambda1" target="asg1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1089" y="530" />
+              <mxPoint x="700" y="530" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Dashed control flow: Auto Scaling group -> replacement NAT instance. Exits below the ASG's own title text (bottom-left) and loops around the outside-left/top of the box, so it never crosses the label. -->
+        <mxCell id="e9" value="replaces" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;endFill=0;dashed=1;strokeColor=#6A6A6A;fontColor=#6A6A6A;fontSize=11;exitX=0;exitY=0.9;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="asg1" target="nat1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="480" />
+              <mxPoint x="430" y="265" />
+              <mxPoint x="584" y="265" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -23,9 +23,9 @@ verification plan (§13).
 
 ![Architecture diagram](docs/architecture.png)
 
-Editable source: [`docs/architecture.excalidraw`](docs/architecture.excalidraw)
-— open it at [excalidraw.com](https://excalidraw.com) (menu → Open) or in
-the Excalidraw VS Code/desktop app.
+Editable source: [`docs/architecture.drawio`](docs/architecture.drawio)
+— open it at [diagrams.net](https://app.diagrams.net) (File → Open From
+→ Device) or in the draw.io VS Code/desktop app.
 
 ## Requirements
 
