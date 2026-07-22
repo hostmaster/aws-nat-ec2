@@ -1,0 +1,76 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init and validate (module)
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Terraform init and validate (examples/basic)
+        working-directory: examples/basic
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck and envsubst
+        run: sudo apt-get update && sudo apt-get install -y shellcheck gettext
+
+      - name: Shellcheck rendered bootstrap script
+        shell: bash
+        run: |
+          shellcheck <(envsubst '${eip_allocation_id} ${route_table_ids}' \
+            < scripts/bootstrap.sh.tpl | sed 's/\$\$/\$/g')
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Python compile and lint
+        run: |
+          python -m py_compile scripts/lambda_failover.py scripts/lambda_spot_fallback.py
+          ruff check scripts/lambda_failover.py scripts/lambda_spot_fallback.py
+
+      - name: Unit tests
+        run: python -m unittest tests.test_lambda_spot_fallback
