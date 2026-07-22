@@ -7,12 +7,16 @@
 set -euo pipefail
 
 # Fetch a fresh token per call instead of threading one through the
-# script — a 60s ttl is plenty for a single request.
+# script — a 60s ttl is plenty for a single request. -f so a bad HTTP
+# status (e.g. a stale/rejected token) fails the curl instead of
+# returning the error body as if it were the token/metadata value.
+# Invoked indirectly via retry()'s "$@", which shellcheck can't trace.
+# shellcheck disable=SC2329
 imds() {
   local token
-  token=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+  token=$(curl -sS -f -X PUT "http://169.254.169.254/latest/api/token" \
     -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-  curl -sS -H "X-aws-ec2-metadata-token: $token" \
+  curl -sS -f -H "X-aws-ec2-metadata-token: $token" \
     "http://169.254.169.254/latest/meta-data/$1"
 }
 
@@ -91,8 +95,17 @@ fi
 # association, route repoint). None depends on another, so each uses
 # `if ! retry ...` rather than a bare `retry ...` — one exhausting its
 # attempts must not stop the others from being attempted too.
-INSTANCE_ID=$(imds instance-id)
-REGION=$(imds placement/region)
+#
+# INSTANCE_ID/REGION are the one thing all three steps genuinely do
+# depend on, so unlike those three, retrying here is not optional: a
+# bare `imds` call with no retry would let a single transient IMDS
+# hiccup (same nano-class boot contention already seen with dnf) abort
+# the whole script via `set -e` before any of the three steps run at
+# all. If retries are exhausted here, there's truly nothing downstream
+# that can succeed either, so letting the script exit non-zero (rather
+# than limping on with an empty instance ID) is intentional.
+INSTANCE_ID=$(retry imds instance-id)
+REGION=$(retry imds placement/region)
 
 # aws_launch_template has no argument for this, so it's disabled here
 # instead of declaratively — required for the instance to forward
@@ -114,12 +127,29 @@ if ! retry aws ec2 associate-address \
   FAILED=1
 fi
 
-# Route table IDs arrive as one comma-separated string, not a bash
-# array — array syntax needs curly braces, which would collide with
-# this file's own templatefile() interpolation.
-OLD_IFS=$IFS
-IFS=','
-for RTB_ID in ${route_table_ids}; do
+# Route table IDs arrive as one comma-separated string. ${route_table_ids}
+# is substituted by templatefile() before bash ever parses this file, so
+# the token left behind has no leading $ — IFS word-splitting only fires
+# on the *result* of a bash expansion, never on a literal token, so
+# `for RTB_ID in ${route_table_ids}` ran exactly once with the whole
+# comma-joined string as a single, invalid --route-table-id value.
+# Assigning it to a real bash variable first forces the split to happen
+# where IFS actually applies.
+route_table_ids_csv="${route_table_ids}"
+IFS=',' read -ra route_table_id_list <<<"$route_table_ids_csv"
+for RTB_ID in "$${route_table_id_list[@]}"; do
+  # A route table with no pre-existing 0.0.0.0/0 route (first-ever launch
+  # into it, e.g. a from-scratch deploy) rejects ReplaceRoute with
+  # InvalidParameterValue ("Use CreateRoute instead"); try CreateRoute
+  # once, cheaply, before falling back to the retried ReplaceRoute that
+  # handles every later reboot/failover, where the route already exists.
+  if aws ec2 create-route \
+    --region "$REGION" \
+    --route-table-id "$RTB_ID" \
+    --destination-cidr-block 0.0.0.0/0 \
+    --instance-id "$INSTANCE_ID" >/dev/null 2>&1; then
+    continue
+  fi
   if ! retry aws ec2 replace-route \
     --region "$REGION" \
     --route-table-id "$RTB_ID" \
@@ -128,6 +158,5 @@ for RTB_ID in ${route_table_ids}; do
     FAILED=1
   fi
 done
-IFS=$OLD_IFS
 
 exit "$FAILED"

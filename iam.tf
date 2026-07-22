@@ -77,12 +77,15 @@ data "aws_iam_policy_document" "nat_instance" {
     resources = ["arn:${local.partition}:ec2:${local.region}:${local.account_id}:instance/*"]
   }
 
-  # ReplaceRoute supports resource-level permissions on route-table —
-  # scoped exactly to the route tables this module was told to manage,
-  # no wildcard needed.
+  # CreateRoute/ReplaceRoute both support resource-level permissions on
+  # route-table — scoped exactly to the route tables this module was told
+  # to manage, no wildcard needed. CreateRoute covers first-ever launch
+  # into a route table with no pre-existing default route (ReplaceRoute
+  # alone rejects that case); ReplaceRoute covers every later reboot or
+  # failover, once a route already exists.
   statement {
     sid       = "SelfRepointRouteTables"
-    actions   = ["ec2:ReplaceRoute"]
+    actions   = ["ec2:CreateRoute", "ec2:ReplaceRoute"]
     resources = local.route_table_arns
   }
 

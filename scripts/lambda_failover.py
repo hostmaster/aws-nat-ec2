@@ -14,6 +14,7 @@ import logging
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -42,10 +43,21 @@ def is_asg_member(instance_id, asg_name, client=autoscaling):
 
 def terminate_in_asg(instance_id, client=autoscaling):
     """Terminate instance_id via its ASG without decrementing desired capacity, so a replacement launches immediately."""
-    client.terminate_instance_in_auto_scaling_group(
-        InstanceId=instance_id,
-        ShouldDecrementDesiredCapacity=False,
-    )
+    try:
+        client.terminate_instance_in_auto_scaling_group(
+            InstanceId=instance_id,
+            ShouldDecrementDesiredCapacity=False,
+        )
+    except ClientError as e:
+        # Benign race: the instance left the ASG between our own
+        # is_asg_member() check and this call (e.g. natural Spot
+        # reclamation won the race). The outcome we wanted — a
+        # replacement launching — is already happening; re-raise
+        # anything else so a genuine failure still surfaces/retries.
+        if e.response.get("Error", {}).get("Code") == "ValidationError":
+            logger.info("Instance %s already left its ASG, nothing to do: %s", instance_id, e)
+            return
+        raise
 
 
 def handler(event, context):
