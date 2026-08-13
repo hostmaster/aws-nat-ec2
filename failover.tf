@@ -56,6 +56,17 @@ data "aws_iam_policy_document" "lambda_failover" {
       "arn:${local.partition}:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/${var.name_prefix}-nat-failover:*",
     ]
   }
+
+  # BYO topic only (var.sns_topic_arn) -- omitted entirely when
+  # notifications are disabled, per local.notifications_enabled.
+  dynamic "statement" {
+    for_each = local.notifications_enabled ? [1] : []
+    content {
+      sid       = "PublishFailoverNotifications"
+      actions   = ["sns:Publish"]
+      resources = [var.sns_topic_arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "lambda_failover" {
@@ -74,12 +85,18 @@ resource "aws_lambda_function" "failover" {
   timeout          = 10
 
   environment {
-    variables = {
-      ASG_NAME = aws_autoscaling_group.nat.name
-    }
+    variables = merge(
+      { ASG_NAME = aws_autoscaling_group.nat.name },
+      local.notifications_enabled ? { SNS_TOPIC_ARN = var.sns_topic_arn } : {}
+    )
   }
 
   tags = var.tags
+
+  # Ensures the explicit log group (observability.tf) exists before
+  # this function's first invoke, so it never auto-creates its own
+  # log group under AWS's implicit "Never expire" default.
+  depends_on = [aws_cloudwatch_log_group.lambda_failover]
 }
 
 # Matches Spot interruption warning events by event type only, not by

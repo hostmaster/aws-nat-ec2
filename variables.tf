@@ -111,3 +111,27 @@ variable "tags" {
   description = "Additional tags applied to all resources."
   default     = {}
 }
+
+variable "sns_topic_arn" {
+  type        = string
+  description = "Bring-your-own SNS topic ARN for failover/health notifications. If null, no notifications are sent and the module creates no SNS resources."
+  default     = null
+}
+
+variable "log_retention_days" {
+  type        = number
+  description = "Retention (days) for both Lambdas' CloudWatch Log Groups. Must be a value CloudWatch Logs accepts for retention_in_days."
+  default     = 14
+
+  validation {
+    condition = contains(
+      [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653],
+      var.log_retention_days
+    )
+    error_message = "log_retention_days must be one of CloudWatch Logs' accepted retention_in_days values: 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653."
+  }
+}
+
+locals {
+  notifications_enabled = var.sns_topic_arn != null
+}

@@ -7,7 +7,9 @@ immediately, rather than waiting for the natural ~2-minute Spot
 interruption window to elapse.
 
 ASG_NAME is set by Terraform (failover.tf) as this function's
-environment variable.
+environment variable. SNS_TOPIC_ARN is set the same way, only when
+notifications are enabled (local.notifications_enabled) -- when unset,
+the notification step is skipped, not attempted.
 """
 
 import logging
@@ -20,6 +22,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 autoscaling = boto3.client("autoscaling")
+sns = boto3.client("sns")
 
 INTERRUPTION_WARNING_DETAIL_TYPE = "EC2 Spot Instance Interruption Warning"
 
@@ -31,8 +34,9 @@ def extract_instance_id(event):
     return event.get("detail", {}).get("instance-id")
 
 
-def is_asg_member(instance_id, asg_name, client=autoscaling):
+def is_asg_member(instance_id, asg_name, client=None):
     """Return True if instance_id currently belongs to asg_name."""
+    client = client or autoscaling
     response = client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
     groups = response.get("AutoScalingGroups", [])
     if not groups:
@@ -41,13 +45,19 @@ def is_asg_member(instance_id, asg_name, client=autoscaling):
     return instance_id in instance_ids
 
 
-def terminate_in_asg(instance_id, client=autoscaling):
-    """Terminate instance_id via its ASG without decrementing desired capacity, so a replacement launches immediately."""
+def terminate_in_asg(instance_id, client=None):
+    """Terminate instance_id via its ASG without decrementing desired capacity, so a replacement launches immediately.
+
+    Returns True if this call performed the termination, False if the
+    instance had already left the ASG (a benign race, not a failure).
+    """
+    client = client or autoscaling
     try:
         client.terminate_instance_in_auto_scaling_group(
             InstanceId=instance_id,
             ShouldDecrementDesiredCapacity=False,
         )
+        return True
     except ClientError as e:
         # Benign race: the instance left the ASG between our own
         # is_asg_member() check and this call (e.g. natural Spot
@@ -56,8 +66,40 @@ def terminate_in_asg(instance_id, client=autoscaling):
         # anything else so a genuine failure still surfaces/retries.
         if e.response.get("Error", {}).get("Code") == "ValidationError":
             logger.info("Instance %s already left its ASG, nothing to do: %s", instance_id, e)
-            return
+            return False
         raise
+
+
+def describe_instance(instance_id, asg_name, client=None):
+    """Return asg_name's Instance dict for instance_id, or None if it isn't a current member."""
+    client = client or autoscaling
+    response = client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+    groups = response.get("AutoScalingGroups", [])
+    if not groups:
+        return None
+    for instance in groups[0].get("Instances", []):
+        if instance["InstanceId"] == instance_id:
+            return instance
+    return None
+
+
+def build_notification_message(instance_id, instance, asg_name, event_time):
+    """Build the SNS notification body for a proactive Spot-failover termination."""
+    return (
+        f"Proactive Spot failover: terminating {instance_id} "
+        f"(type={instance.get('InstanceType', 'unknown')}, "
+        f"az={instance.get('AvailabilityZone', 'unknown')}) "
+        f"in ASG {asg_name} at {event_time or 'unknown time'}."
+    )
+
+
+def publish_notification(topic_arn, message, client=None):
+    """Publish message to topic_arn, or skip cleanly (log-only) if topic_arn is falsy."""
+    if not topic_arn:
+        logger.info("SNS_TOPIC_ARN not set, skipping Spot-failover notification")
+        return
+    client = client or sns
+    client.publish(TopicArn=topic_arn, Subject="NAT instance proactive Spot failover", Message=message)
 
 
 def handler(event, context):
@@ -72,5 +114,9 @@ def handler(event, context):
         logger.info("Ignoring interruption warning for %s: not a member of %s", instance_id, asg_name)
         return
 
+    instance = describe_instance(instance_id, asg_name) or {}
     logger.info("Terminating %s in %s (proactive Spot failover)", instance_id, asg_name)
-    terminate_in_asg(instance_id)
+    terminated = terminate_in_asg(instance_id)
+    if terminated:
+        message = build_notification_message(instance_id, instance, asg_name, event.get("time"))
+        publish_notification(os.environ.get("SNS_TOPIC_ARN"), message)
