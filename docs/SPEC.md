@@ -23,7 +23,7 @@ and needs replacing.
 - Support both On-Demand and Spot capacity. When `use_spot = true`, prefer
   Spot via the Mixed Instances Policy; when Spot capacity is unavailable
   across every configured pool in the AZ, fall back to On-Demand via an
-  explicit safety net (CloudWatch alarm + Lambda policy flip — see §5.5).
+  explicit safety net (CloudWatch alarm + Lambda policy flip — see §5.4).
   A static `use_spot = false` toggle remains available
   for callers who want 100% On-Demand without the fallback machinery.
 - Support both x86_64 and arm64 (Graviton) architectures.
@@ -72,7 +72,7 @@ and needs replacing.
   needs NAT egress, passing that AZ's public subnet and the list of
   private route table IDs to repoint.
 
-```
+```text
                  ┌────────────────────────────┐
                  │   AZ-a                      │
   Private Subnet │  ┌──────────────────────┐  │
@@ -92,7 +92,7 @@ and needs replacing.
 - **Auto Scaling Group** — `min=max=desired=1`, single public subnet,
   EC2 status check health check, Mixed Instances Policy (Spot when
   `use_spot = true`, 100% On-Demand when `use_spot = false`). Spot
-  exhaustion fallback per §5.5 when `spot_on_demand_fallback = true`
+  exhaustion fallback per §5.4 when `spot_on_demand_fallback = true`
   (the default).
 - **Elastic IP** — allocated by the module by default (see §10 for the
   bring-your-own alternative), reassociated to the current instance by
@@ -113,8 +113,17 @@ and needs replacing.
 - **EventBridge Rule + Lambda + Lambda IAM Role** — proactive failover on
   Spot interruption warning (see §5.2).
 - **CloudWatch Alarm + Fallback Lambda + Lambda IAM Role** — Spot
-  exhaustion fallback to On-Demand (see §5.5). Omitted when `use_spot =
+  exhaustion fallback to On-Demand (see §5.4). Omitted when `use_spot =
   false` or `spot_on_demand_fallback = false`.
+- **SNS notifications + backstop alarms** (all opt-in, BYO topic only —
+  see §7.1) — reactive/proactive failover notifications, Lambda
+  `Errors`/`Throttles` alarms, and an independent signal on the Spot-
+  exhaustion alarm. Nothing here changes NAT behavior; it's purely
+  observability. Omitted entirely when `sns_topic_arn = null`.
+- **CloudWatch Log Groups** (both Lambdas) — explicit, with
+  `retention_in_days = var.log_retention_days`, created ahead of each
+  function so neither one falls back to AWS's implicit never-expire
+  default.
 
 ### 4.3 Networking / data flow
 
@@ -181,7 +190,7 @@ per §3).
   `ec2:AssociateAddress`, using its own IAM instance-profile permissions.
   No Lambda or external orchestrator is involved in this step.
 
-### 5.5 Spot exhaustion fallback (T21)
+### 5.4 Spot exhaustion fallback (T21)
 
 When `use_spot = true`, the ASG targets 100% Spot
 (`on_demand_percentage_above_base_capacity = 0`). AWS does **not**
@@ -227,7 +236,7 @@ helps because it reacts to the earlier *rebalance recommendation*
 signal, ahead of the 2-minute interruption warning §5.2's Lambda waits
 for.
 
-### 5.6 Route table continuity
+### 5.5 Route table continuity
 
 - The bootstrap script, using the instance's own IAM role, calls
   `ec2:ReplaceRoute` for each route table ID in `private_route_table_ids`,
@@ -253,7 +262,7 @@ for.
 ### 7.1 Inputs
 
 Full table, with types, defaults, and descriptions: [README.md
-§Inputs](README.md#inputs) — moved there (2026-07-22) so it's visible on
+§Inputs](../README.md#inputs) — moved there (2026-07-22) so it's visible on
 the repo's GitHub front page without opening this file. README.md is the
 source of truth for this table; don't duplicate it back here.
 
@@ -262,7 +271,7 @@ supplied (caller owns lifecycle) — see §10.
 
 ### 7.2 Outputs
 
-Full table, with descriptions: [README.md §Outputs](README.md#outputs)
+Full table, with descriptions: [README.md §Outputs](../README.md#outputs)
 — moved there (2026-07-22) for the same GitHub front-page visibility
 reason as §7.1. README.md is the source of truth; don't duplicate it
 back here.
@@ -271,8 +280,17 @@ back here.
 
 **NAT instance role** (least privilege, scoped where practical to this
 instance/these resources):
+
 - `ec2:AssociateAddress`, `ec2:DisassociateAddress`
-- `ec2:ReplaceRoute`, `ec2:DescribeRouteTables`
+- `ec2:ModifyInstanceAttribute` — self-disables `source_dest_check` at
+  boot (T11): `aws_launch_template` has no argument for this at all
+  (confirmed via `terraform providers schema`), so it can't be set
+  declaratively.
+- `ec2:CreateRoute`, `ec2:ReplaceRoute`, `ec2:DescribeRouteTables` —
+  `CreateRoute` covers first-ever launch into a route table with no
+  pre-existing default route; `ReplaceRoute` alone rejects that case
+  with `InvalidParameterValue` (found live during a real migration
+  cutover from a predecessor setup with no seeded default route).
 - `ssmmessages:*`, `ec2messages:*`, `ssm:UpdateInstanceInformation`
   (SSM Session Manager access)
 
@@ -282,13 +300,24 @@ never the EC2 API, so there's no self-lookup call to authorize
 (confirmed while implementing T8, 2026-07-22).
 
 **Failover Lambda role** (proactive Spot interruption — §5.2):
+
 - `autoscaling:TerminateInstanceInAutoScalingGroup`
+- `autoscaling:DescribeAutoScalingGroups`
+- `sns:Publish`, scoped to `var.sns_topic_arn` — **only granted when
+  `sns_topic_arn` is set** (T24); publishes a Spot-failover
+  notification after a real termination.
+- `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
+
+**Spot fallback Lambda role** (§5.4):
+
+- `autoscaling:UpdateAutoScalingGroup` (scoped to this ASG's ARN)
 - `autoscaling:DescribeAutoScalingGroups`
 - `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 
-**Spot fallback Lambda role** (§5.5):
-- `autoscaling:UpdateAutoScalingGroup` (scoped to this ASG's ARN)
-- `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
+**No IAM role of this module's own** is needed for reactive-failover
+ASG notifications or the CloudWatch alarm → SNS publish actions
+(T25/T26) — both are AWS-native service integrations authorized via
+the SNS topic's own resource policy, not a caller-side IAM grant.
 
 ## 8. Deployment Assumptions
 
@@ -300,7 +329,7 @@ never the EC2 API, so there's no self-lookup call to authorize
   tables are provided by the caller; the module never creates network
   topology.
 - Terraform and provider version constraints live in `versions.tf`; see
-  [README.md's Requirements table](README.md#requirements) for current
+  [README.md's Requirements table](../README.md#requirements) for current
   pins — not repeated here to avoid the two copies drifting out of sync.
 - No key pair distribution — operators use SSM Session Manager
   (`aws ssm start-session`) for any interactive access.
@@ -309,7 +338,7 @@ never the EC2 API, so there's no self-lookup call to authorize
 
 - **Spot capacity unavailable:** AWS Mixed Instances Policy does **not**
   fall back to On-Demand automatically — the ASG retries Spot pools
-  only. **Implemented (T21):** explicit safety net (see §5.5). Widening
+  only. **Implemented (T21):** explicit safety net (see §5.4). Widening
   `instance_types` and ASG capacity rebalancing reduce but do not
   eliminate this risk.
 - **Spot interruption warning fires:** handled proactively per §5.2.
@@ -340,18 +369,27 @@ different behavior:
    case the EIP is orphaned intentionally and must be cleaned up (or
    re-imported) manually.
 
-## 11. Testing Strategy (Deferred)
+## 11. Testing Strategy (Partially Deferred)
 
-Per explicit instruction, automated test suites (bats for bootstrap
-script logic, `terraform test` for module logic, pytest for the Lambda)
-are **not** being built in this phase. When resumed, the intended
-approach is:
+Per explicit instruction, `bats` (bootstrap script logic) and
+`terraform test` (module logic) are **not** being built in this
+phase — deliberately deferred as backlog. The Lambda side is **not**
+deferred: `tests/test_lambda_failover.py` and
+`tests/test_lambda_spot_fallback.py` are real, committed suites
+(stdlib `unittest`, `boto3`/`botocore` stubbed via `sys.modules` so no
+dependency is added — Lambda's own runtime bundles `boto3`), covering
+both Lambdas' pure logic and full `handler()` flows via
+`unittest.mock.patch.object`. Run with:
+
+```bash
+python3 -m unittest tests.test_lambda_failover tests.test_lambda_spot_fallback
+```
+
+Still deferred, intended approach when resumed:
 
 - Bootstrap/failover shell logic → **bats**, run against a mocked `aws`
   CLI, asserting the correct `ec2:AssociateAddress` /
   `ec2:ReplaceRoute` calls are constructed.
-- Lambda failover function → **pytest**, mocking `boto3` autoscaling
-  calls.
 - Terraform module → native `terraform test` with a mocked provider,
   validating variable validation rules, conditional Spot/On-Demand
   wiring, and output correctness.
@@ -360,24 +398,31 @@ approach is:
 
 Small files, explicit interfaces, clean separation by concern:
 
-```
+```text
 terraform-aws-nat-instance-al2023/
-├── versions.tf              # terraform + provider version constraints
-├── variables.tf              # module inputs (table in README.md, §7.1 here just points there)
-├── outputs.tf                 # module outputs (table in README.md, §7.2 here just points there)
-├── network.tf                 # security group, subnet/AZ data sources
-├── compute.tf                  # launch template, ASG, mixed instances policy
-├── eip.tf                       # EIP resource (conditional on eip_allocation_id)
+├── versions.tf                   # terraform + provider version constraints
+├── variables.tf                  # module inputs (table in README.md, §7.1 here just points there)
+├── outputs.tf                    # module outputs (table in README.md, §7.2 here just points there)
+├── network.tf                    # security group, subnet/AZ data sources
+├── compute.tf                    # launch template, ASG, mixed instances policy
+├── eip.tf                        # EIP resource (conditional on eip_allocation_id)
 ├── iam.tf                        # instance role, instance profile, policies
-├── failover.tf                    # EventBridge rule, Lambda, Lambda IAM role
+├── failover.tf                   # EventBridge rule, proactive-failover Lambda, Lambda IAM role (§5.2)
+├── spot_fallback.tf               # Spot-exhaustion alarm, fallback Lambda, Lambda IAM role (§5.4)
+├── observability.tf                # SNS notifications, Lambda backstop alarms, log group retention (§7.3)
 ├── scripts/
-│   ├── bootstrap.sh.tpl              # user-data template (NAT setup, EIP, routes)
-│   └── lambda_failover.py             # proactive failover Lambda source
+│   ├── bootstrap.sh.tpl           # user-data template (NAT setup, EIP, routes)
+│   ├── lambda_failover.py         # proactive failover Lambda source
+│   └── lambda_spot_fallback.py    # Spot-exhaustion fallback Lambda source
+├── tests/
+│   ├── test_lambda_failover.py       # unit tests (stdlib unittest, mocked boto3)
+│   └── test_lambda_spot_fallback.py  # unit tests (stdlib unittest, mocked boto3)
+├── examples/basic/                # throwaway verification fixture (§13) -- not part of the module itself
 ├── README.md
 └── docs/
-    ├── SPEC.md                         # this document
-    ├── architecture.png                # architecture diagram, embedded in README
-    └── architecture.excalidraw         # editable diagram source
+    ├── SPEC.md                   # this document
+    ├── architecture.png          # architecture diagram, embedded in README
+    └── architecture.drawio       # editable diagram source (open at diagrams.net)
 ```
 
 ## 13. Verification Plan (Runnable)
