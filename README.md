@@ -13,7 +13,10 @@ Highlights:
 - Spot capacity by default, with reactive (ASG replacement) and
   proactive (Spot-interruption-warning → Lambda) failover.
 - Spot exhaustion fallback: CloudWatch alarm + Lambda flips the ASG to
-  On-Demand when zero instances stay InService (SPEC §5.5).
+  On-Demand when zero instances stay InService (SPEC §5.4).
+- Optional SNS notifications (BYO topic) for reactive/proactive
+  failover and Lambda error/throttle backstop alarms — opt-in, nothing
+  created when `sns_topic_arn` is unset.
 - The public IP stays the same across every instance replacement.
 - SSM Session Manager only — no SSH, no key pairs, no bastion host.
 
@@ -106,6 +109,8 @@ sensible default.
 | `release_eip_on_destroy` | `bool` | `true` | Whether the module-allocated EIP is released on `terraform destroy`. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). |
 | `allow_inbound_cidrs` | `list(string)` | `[]` | Optional additional ingress CIDRs on the NAT security group, beyond the default (no inbound from the internet). |
 | `tags` | `map(string)` | `{}` | Additional tags applied to all resources. |
+| `sns_topic_arn` | `optional(string)` | `null` | Bring-your-own SNS topic ARN for failover/health notifications. If `null`, no notifications are sent and the module creates no SNS resources. |
+| `log_retention_days` | `number` | `14` | Retention (days) for both Lambdas' CloudWatch Log Groups. Must be one of CloudWatch Logs' accepted `retention_in_days` values (validated). |
 
 ## Outputs
 

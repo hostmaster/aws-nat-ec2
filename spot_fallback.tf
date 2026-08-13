@@ -87,6 +87,11 @@ resource "aws_lambda_function" "spot_fallback" {
   }
 
   tags = var.tags
+
+  # Ensures the explicit log group (observability.tf) exists before
+  # this function's first invoke, so it never auto-creates its own
+  # log group under AWS's implicit "Never expire" default.
+  depends_on = [aws_cloudwatch_log_group.lambda_spot_fallback]
 }
 
 resource "aws_cloudwatch_metric_alarm" "spot_fallback" {
@@ -109,7 +114,14 @@ resource "aws_cloudwatch_metric_alarm" "spot_fallback" {
     AutoScalingGroupName = aws_autoscaling_group.nat.name
   }
 
-  alarm_actions = [aws_lambda_function.spot_fallback[0].arn]
+  # Lambda invoke is the actual fallback action; SNS (when enabled) is
+  # an independent human-facing signal that it fired -- today this
+  # alarm had no such signal, only the Lambda side-effect.
+  alarm_actions = concat(
+    [aws_lambda_function.spot_fallback[0].arn],
+    local.notifications_enabled ? [var.sns_topic_arn] : []
+  )
+  ok_actions = local.notifications_enabled ? [var.sns_topic_arn] : []
 
   tags = var.tags
 }
