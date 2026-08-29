@@ -47,22 +47,50 @@ resource "aws_autoscaling_notification" "nat" {
 # traffic), a single Error or Throttle is meaningful on its own, not
 # noise -- evaluation_periods=1 and treat_missing_data=notBreaching are
 # deliberate here, not the generic multi-period recommendation.
-resource "aws_cloudwatch_metric_alarm" "lambda_failover_errors" {
-  count = local.notifications_enabled ? 1 : 0
+#
+# One map entry per {Lambda, metric} pair rather than four near-
+# identical resource blocks. The spot_fallback_* entries are omitted
+# entirely (not just count=0) when that Lambda doesn't exist, since
+# aws_lambda_function.spot_fallback[0] isn't a valid reference then.
+locals {
+  lambda_backstop_alarms = merge(
+    {
+      for metric_name in ["Errors", "Throttles"] :
+      "failover_${lower(metric_name)}" => {
+        name_suffix   = "nat-failover-${lower(metric_name)}"
+        metric_name   = metric_name
+        function_name = aws_lambda_function.failover.function_name
+        description   = "Proactive Spot-failover Lambda (${aws_lambda_function.failover.function_name}) ${metric_name == "Errors" ? "reported an error" : "was throttled"}."
+      }
+    },
+    local.spot_fallback_enabled ? {
+      for metric_name in ["Errors", "Throttles"] :
+      "spot_fallback_${lower(metric_name)}" => {
+        name_suffix   = "nat-spot-fallback-${lower(metric_name)}"
+        metric_name   = metric_name
+        function_name = aws_lambda_function.spot_fallback[0].function_name
+        description   = "Spot-exhaustion fallback Lambda (${aws_lambda_function.spot_fallback[0].function_name}) ${metric_name == "Errors" ? "reported an error" : "was throttled"}."
+      }
+    } : {}
+  )
+}
 
-  alarm_name          = "${var.name_prefix}-nat-failover-errors"
+resource "aws_cloudwatch_metric_alarm" "lambda_backstop" {
+  for_each = local.notifications_enabled ? local.lambda_backstop_alarms : {}
+
+  alarm_name          = "${var.name_prefix}-${each.value.name_suffix}"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
-  metric_name         = "Errors"
+  metric_name         = each.value.metric_name
   namespace           = "AWS/Lambda"
   period              = 300
   statistic           = "Sum"
   threshold           = 0
   treat_missing_data  = "notBreaching"
-  alarm_description   = "Proactive Spot-failover Lambda (${aws_lambda_function.failover.function_name}) reported an error."
+  alarm_description   = each.value.description
 
   dimensions = {
-    FunctionName = aws_lambda_function.failover.function_name
+    FunctionName = each.value.function_name
   }
 
   alarm_actions = [var.sns_topic_arn]
@@ -71,74 +99,25 @@ resource "aws_cloudwatch_metric_alarm" "lambda_failover_errors" {
   tags = var.tags
 }
 
-resource "aws_cloudwatch_metric_alarm" "lambda_failover_throttles" {
-  count = local.notifications_enabled ? 1 : 0
-
-  alarm_name          = "${var.name_prefix}-nat-failover-throttles"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Throttles"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Proactive Spot-failover Lambda (${aws_lambda_function.failover.function_name}) was throttled."
-
-  dimensions = {
-    FunctionName = aws_lambda_function.failover.function_name
-  }
-
-  alarm_actions = [var.sns_topic_arn]
-  ok_actions    = [var.sns_topic_arn]
-
-  tags = var.tags
+# Preserves existing state addresses across the count -> for_each
+# refactor above, so an already-applied module doesn't destroy/recreate
+# these alarms on the next apply.
+moved {
+  from = aws_cloudwatch_metric_alarm.lambda_failover_errors[0]
+  to   = aws_cloudwatch_metric_alarm.lambda_backstop["failover_errors"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "lambda_spot_fallback_errors" {
-  count = local.notifications_enabled && local.spot_fallback_enabled ? 1 : 0
-
-  alarm_name          = "${var.name_prefix}-nat-spot-fallback-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Spot-exhaustion fallback Lambda (${aws_lambda_function.spot_fallback[0].function_name}) reported an error."
-
-  dimensions = {
-    FunctionName = aws_lambda_function.spot_fallback[0].function_name
-  }
-
-  alarm_actions = [var.sns_topic_arn]
-  ok_actions    = [var.sns_topic_arn]
-
-  tags = var.tags
+moved {
+  from = aws_cloudwatch_metric_alarm.lambda_failover_throttles[0]
+  to   = aws_cloudwatch_metric_alarm.lambda_backstop["failover_throttles"]
 }
 
-resource "aws_cloudwatch_metric_alarm" "lambda_spot_fallback_throttles" {
-  count = local.notifications_enabled && local.spot_fallback_enabled ? 1 : 0
+moved {
+  from = aws_cloudwatch_metric_alarm.lambda_spot_fallback_errors[0]
+  to   = aws_cloudwatch_metric_alarm.lambda_backstop["spot_fallback_errors"]
+}
 
-  alarm_name          = "${var.name_prefix}-nat-spot-fallback-throttles"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Throttles"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Spot-exhaustion fallback Lambda (${aws_lambda_function.spot_fallback[0].function_name}) was throttled."
-
-  dimensions = {
-    FunctionName = aws_lambda_function.spot_fallback[0].function_name
-  }
-
-  alarm_actions = [var.sns_topic_arn]
-  ok_actions    = [var.sns_topic_arn]
-
-  tags = var.tags
+moved {
+  from = aws_cloudwatch_metric_alarm.lambda_spot_fallback_throttles[0]
+  to   = aws_cloudwatch_metric_alarm.lambda_backstop["spot_fallback_throttles"]
 }

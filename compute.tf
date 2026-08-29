@@ -69,8 +69,23 @@ resource "aws_launch_template" "nat" {
     route_table_ids   = join(",", var.private_route_table_ids)
   }))
 
+  # instance, volume, and network-interface each need their own
+  # tag_specifications block -- AWS does not propagate an instance's
+  # tags to its attached EBS volume or ENI on its own, and this
+  # module's whole purpose is cost tracking, so the root volume showing
+  # up untagged in cost-allocation reports would defeat that.
   tag_specifications {
     resource_type = "instance"
+    tags          = merge(var.tags, { Name = "${var.name_prefix}-nat" })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags          = merge(var.tags, { Name = "${var.name_prefix}-nat" })
+  }
+
+  tag_specifications {
+    resource_type = "network-interface"
     tags          = merge(var.tags, { Name = "${var.name_prefix}-nat" })
   }
 

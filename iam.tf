@@ -1,9 +1,24 @@
-# iam.tf — NAT instance role/profile and policies. Lambda roles are in
-# failover.tf and spot_fallback.tf.
+# iam.tf — NAT instance role/profile and policies, plus the Lambda
+# assume-role policy shared by both Lambda roles (failover.tf,
+# spot_fallback.tf) since it's identical for each.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
+
+# Shared by aws_iam_role.lambda_failover (failover.tf) and
+# aws_iam_role.lambda_spot_fallback (spot_fallback.tf) — both Lambdas
+# assume their role the same way, so one document covers both.
+data "aws_iam_policy_document" "lambda_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
@@ -15,15 +30,12 @@ locals {
     "arn:${local.partition}:ec2:${local.region}:${local.account_id}:route-table/${rtb_id}"
   ]
 
-  # Exact ARN only when the caller brings their own EIP (known at plan
-  # time). A module-allocated EIP's allocation ID doesn't exist until
-  # eip.tf creates it, so that path falls back to an account/region
-  # wildcard.
-  eip_resource = (
-    var.eip_allocation_id != null
-    ? "arn:${local.partition}:ec2:${local.region}:${local.account_id}:elastic-ip/${var.eip_allocation_id}"
-    : "arn:${local.partition}:ec2:${local.region}:${local.account_id}:elastic-ip/*"
-  )
+  # local.eip_allocation_id (eip.tf) already resolves to either the BYO
+  # data source's id or the module-allocated aws_eip.nat[0].id — an
+  # apply-time-known value is fine to reference here, so this is always
+  # scoped exactly to the one EIP this module actually uses, no wildcard
+  # needed.
+  eip_resource = "arn:${local.partition}:ec2:${local.region}:${local.account_id}:elastic-ip/${local.eip_allocation_id}"
 }
 
 data "aws_iam_policy_document" "nat_instance_assume_role" {
@@ -50,11 +62,12 @@ resource "aws_iam_instance_profile" "nat_instance" {
 }
 
 data "aws_iam_policy_document" "nat_instance" {
-  # AssociateAddress/DisassociateAddress need resource entries for
-  # elastic-ip, instance, and network-interface. Instance/ENI IDs can't
-  # be known ahead of an ASG launch, so those two stay account/region
-  # wildcards; the elastic-ip itself is scoped exactly where possible
-  # (local.eip_resource).
+  # AssociateAddress/DisassociateAddress need resource entries for both
+  # elastic-ip and instance. The instance ID isn't known ahead of an ASG
+  # launch, so that stays an account/region wildcard; the elastic-ip
+  # itself is scoped exactly (local.eip_resource). bootstrap.sh.tpl only
+  # ever associates by --instance-id, never --network-interface-id, so
+  # no network-interface resource entry is needed.
   statement {
     sid = "SelfAssociateElasticIp"
     actions = [
@@ -64,7 +77,6 @@ data "aws_iam_policy_document" "nat_instance" {
     resources = [
       local.eip_resource,
       "arn:${local.partition}:ec2:${local.region}:${local.account_id}:instance/*",
-      "arn:${local.partition}:ec2:${local.region}:${local.account_id}:network-interface/*",
     ]
   }
 

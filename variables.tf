@@ -52,6 +52,11 @@ variable "instance_types" {
   type        = list(string)
   description = "Candidate instance types for the ASG mixed-instances policy. Defaults to an architecture-based list (resolved from `architecture` in compute.tf) when left null."
   default     = null
+
+  validation {
+    condition     = var.instance_types == null || length(var.instance_types) > 0
+    error_message = "instance_types must be null (use the architecture-based default) or a non-empty list."
+  }
 }
 
 variable "use_spot" {

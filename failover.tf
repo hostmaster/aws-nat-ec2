@@ -6,20 +6,9 @@ data "archive_file" "lambda_failover" {
   output_path = "${path.module}/.terraform/tmp/lambda_failover.zip"
 }
 
-data "aws_iam_policy_document" "lambda_failover_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
-}
-
 resource "aws_iam_role" "lambda_failover" {
   name_prefix        = "${var.name_prefix}-nat-failover-"
-  assume_role_policy = data.aws_iam_policy_document.lambda_failover_assume_role.json
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
   tags               = var.tags
 }
 

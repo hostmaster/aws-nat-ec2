@@ -110,11 +110,15 @@ def handler(event, context):
         logger.info("Ignoring event with detail-type %r (not a Spot interruption warning)", event.get("detail-type"))
         return
 
-    if not is_asg_member(instance_id, asg_name):
+    # describe_instance()'s None return already means "not a current
+    # member" -- reuse it instead of a separate is_asg_member() call, so
+    # a real invocation only makes one DescribeAutoScalingGroups call,
+    # not two.
+    instance = describe_instance(instance_id, asg_name)
+    if instance is None:
         logger.info("Ignoring interruption warning for %s: not a member of %s", instance_id, asg_name)
         return
 
-    instance = describe_instance(instance_id, asg_name) or {}
     logger.info("Terminating %s in %s (proactive Spot failover)", instance_id, asg_name)
     terminated = terminate_in_asg(instance_id)
     if terminated:

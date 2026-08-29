@@ -12,24 +12,11 @@ data "archive_file" "lambda_spot_fallback" {
   output_path = "${path.module}/.terraform/tmp/lambda_spot_fallback.zip"
 }
 
-data "aws_iam_policy_document" "lambda_spot_fallback_assume_role" {
-  count = local.spot_fallback_enabled ? 1 : 0
-
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
-}
-
 resource "aws_iam_role" "lambda_spot_fallback" {
   count = local.spot_fallback_enabled ? 1 : 0
 
   name_prefix        = "${var.name_prefix}-nat-spot-fb-"
-  assume_role_policy = data.aws_iam_policy_document.lambda_spot_fallback_assume_role[0].json
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
   tags               = var.tags
 }
 
@@ -42,6 +29,8 @@ data "aws_iam_policy_document" "lambda_spot_fallback" {
     resources = [aws_autoscaling_group.nat.arn]
   }
 
+  # List-access-level action with no resource-level permissions defined
+  # for it — "*" is the only valid value.
   statement {
     sid       = "DescribeAsg"
     actions   = ["autoscaling:DescribeAutoScalingGroups"]
