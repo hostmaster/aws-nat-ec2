@@ -75,4 +75,4 @@ jobs:
           ruff check scripts/lambda_failover.py scripts/lambda_spot_fallback.py
 
       - name: Unit tests
-        run: python -m unittest tests.test_lambda_spot_fallback
+        run: python -m unittest tests.test_lambda_failover tests.test_lambda_spot_fallback
