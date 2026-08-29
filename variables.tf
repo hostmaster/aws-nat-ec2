@@ -54,7 +54,12 @@ variable "instance_types" {
   default     = null
 
   validation {
-    condition     = var.instance_types == null || length(var.instance_types) > 0
+    # Ternary, not `||` -- Terraform's boolean operators don't reliably
+    # short-circuit across versions (confirmed broken on this module's
+    # own declared floor, 1.9.8: `length(null)` still errors even when
+    # the left operand is already true). The ternary only evaluates the
+    # selected branch, so it's safe on every version >= 1.9.
+    condition     = var.instance_types == null ? true : length(var.instance_types) > 0
     error_message = "instance_types must be null (use the architecture-based default) or a non-empty list."
   }
 }
