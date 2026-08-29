@@ -9,8 +9,6 @@ module "nat" {
   vpc_id                  = aws_vpc.this.id
   public_subnet_id        = aws_subnet.public.id
   private_route_table_ids = [aws_route_table.private.id]
-
-  depends_on = [aws_route.private_default_placeholder]
 }
 
 data "aws_ssm_parameter" "al2023_ami" {

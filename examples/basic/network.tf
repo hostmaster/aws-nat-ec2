@@ -67,36 +67,6 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
-# Placeholder 0.0.0.0/0 route, pointed at the IGW only as a bootstrap
-# value: the NAT module's bootstrap script only calls ec2:ReplaceRoute,
-# never CreateRoute, which needs a pre-existing route to replace. Once
-# the NAT instance boots, it repoints this at itself; ignore_changes
-# stops Terraform from fighting the boot script over the target on
-# every later plan. Briefly routing "private" traffic via the IGW
-# during bring-up is an accepted compromise for a disposable test
-# fixture only.
-resource "aws_route" "private_default_placeholder" {
-  route_table_id         = aws_route_table.private.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.this.id
-
-  lifecycle {
-    # instance_id is provider-computed-only in this aws_route schema
-    # (no configured value ever exists for it, so it can't appear
-    # here) — the boot script's instance-targeted ReplaceRoute call
-    # surfaces back through network_interface_id instead (AWS resolves
-    # an instance-targeted route to that instance's ENI), which is why
-    # that one's listed.
-    ignore_changes = [
-      gateway_id,
-      network_interface_id,
-      vpc_peering_connection_id,
-      transit_gateway_id,
-      nat_gateway_id,
-    ]
-  }
-}
-
 # SSM/EC2Messages/SSMMessages interface endpoints. This fixture's VPC
 # has no other path for Session Manager's control/data channel, so
 # without these the private test instance's SSM access depends on the
