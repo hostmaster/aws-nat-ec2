@@ -363,11 +363,19 @@ different behavior:
    (`eip_allocation_id = null`). Bring-your-own is supported as an
    escape hatch but is not the default path.
 2. **EIP lifecycle on destroy:** default is `release_eip_on_destroy =
-   true` — the EIP is released when the module is destroyed. If you
-   want the IP to survive a destroy/recreate cycle (e.g. it's
-   allowlisted in a downstream firewall), set this to `false`, in which
-   case the EIP is orphaned intentionally and must be cleaned up (or
-   re-imported) manually.
+   true` — a normal `terraform destroy` releases the EIP. **The
+   variable itself is documentation-only and has no Terraform-enforced
+   effect**: `lifecycle` meta-arguments (the only mechanism that could
+   gate `aws_eip.nat`'s destruction) accept only static literal values,
+   never a variable reference, so no resource anywhere in this module
+   reads `var.release_eip_on_destroy` — setting it to `false` alone
+   changes nothing about what `terraform destroy` does. If you want the
+   IP to survive a destroy/recreate cycle (e.g. it's allowlisted in a
+   downstream firewall), the only actual mechanism is manual: run
+   `terraform state rm '<module address>.aws_eip.nat[0]'` *before*
+   destroying. The EIP then becomes unmanaged Terraform state — still a
+   real, billed AWS resource — and must be reimported or released
+   manually afterward.
 
 ## 11. Testing Strategy (Partially Deferred)
 
@@ -585,8 +593,8 @@ comparison: e.g. 10TB/mo through a NAT Gateway costs an *extra*
 ~$480/mo in processing fees alone that this module's approach doesn't
 incur.
 
-**Operational consequence of the `release_eip_on_destroy = false`
-escape hatch (T6):** an intentionally-orphaned EIP is not free to leave
+**Operational consequence of the manual `terraform state rm` escape
+hatch (§10, T6):** an intentionally-orphaned EIP is not free to leave
 sitting around — under the current pricing model it keeps costing
 $3.60/mo indefinitely until it's manually released, unlike the old
 "idle EIPs cost, attached EIPs are free" assumption that may have

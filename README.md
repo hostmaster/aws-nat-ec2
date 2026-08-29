@@ -106,7 +106,7 @@ sensible default.
 | `spot_fallback_alarm_period_seconds` | `number` | `120` | CloudWatch alarm period for Spot-exhaustion fallback. |
 | `spot_fallback_alarm_evaluation_periods` | `number` | `2` | Consecutive breaching periods before fallback runs. |
 | `eip_allocation_id` | `optional(string)` | `null` | Bring-your-own EIP allocation ID. If `null`, the module allocates a new EIP. |
-| `release_eip_on_destroy` | `bool` | `true` | Whether the module-allocated EIP is released on `terraform destroy`. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). |
+| `release_eip_on_destroy` | `bool` | `true` | **Documentation-only — has no Terraform-enforced effect.** `lifecycle` meta-arguments can't reference variables, so no resource reads this value; a normal `terraform destroy` always releases the module-allocated EIP regardless of what it's set to. To actually preserve the EIP across a destroy, run `terraform state rm '<module address>.aws_eip.nat[0]'` before destroying — it becomes unmanaged and must be reimported or released manually afterward. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). See SPEC.md §10. |
 | `allow_inbound_cidrs` | `list(string)` | `[]` | Optional additional ingress CIDRs on the NAT security group, beyond the default (no inbound from the internet). |
 | `tags` | `map(string)` | `{}` | Additional tags applied to all resources. |
 | `sns_topic_arn` | `optional(string)` | `null` | Bring-your-own SNS topic ARN for failover/health notifications. If `null`, no notifications are sent and the module creates no SNS resources. |
