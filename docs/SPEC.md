@@ -269,6 +269,10 @@ source of truth for this table; don't duplicate it back here.
 Note on `release_eip_on_destroy`: ignored if `eip_allocation_id` is
 supplied (caller owns lifecycle) — see §10.
 
+Note on `root_volume_kms_key_id`: a customer-managed key needs its own
+key policy changes before instance launches will succeed — see the
+caveat in README.md's Inputs table for the exact statements required.
+
 ### 7.2 Outputs
 
 Full table, with descriptions: [README.md §Outputs](../README.md#outputs)
