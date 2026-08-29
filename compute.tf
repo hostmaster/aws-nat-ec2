@@ -13,6 +13,17 @@ data "aws_ssm_parameter" "al2023_ami" {
   name = local.al2023_ami_ssm_parameter_names[var.architecture]
 }
 
+# Root device name isn't published by the SSM parameter itself (just the
+# AMI ID) -- read it from the resolved AMI directly rather than assuming
+# /dev/xvda, so a future AL2023 AMI change can't silently break the
+# block_device_mappings device_name below.
+data "aws_ami" "al2023" {
+  filter {
+    name   = "image-id"
+    values = [data.aws_ssm_parameter.al2023_ami.value]
+  }
+}
+
 locals {
   # Default candidate types per architecture. The ASG's Mixed Instances
   # Policy override list consumes the full set; the Launch Template
@@ -34,6 +45,21 @@ resource "aws_launch_template" "nat" {
 
   image_id      = data.aws_ssm_parameter.al2023_ami.value
   instance_type = local.resolved_instance_types[0]
+
+  # Explicit root volume instead of inheriting the AMI's own defaults --
+  # encryption is hardcoded on (not a variable) so this module can never
+  # launch an unencrypted NAT instance; only the KMS key is configurable.
+  block_device_mappings {
+    device_name = data.aws_ami.al2023.root_device_name
+
+    ebs {
+      volume_size           = var.root_volume_size
+      volume_type           = "gp3"
+      encrypted             = true
+      kms_key_id            = var.root_volume_kms_key_id
+      delete_on_termination = true
+    }
+  }
 
   iam_instance_profile {
     name = aws_iam_instance_profile.nat_instance.name

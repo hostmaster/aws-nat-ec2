@@ -105,6 +105,23 @@ variable "release_eip_on_destroy" {
   default     = true
 }
 
+variable "root_volume_size" {
+  type        = number
+  description = "Root EBS volume size (GB) for the NAT instance."
+  default     = 8
+
+  validation {
+    condition     = var.root_volume_size >= 8 && var.root_volume_size <= 100
+    error_message = "root_volume_size must be between 8 and 100 GB."
+  }
+}
+
+variable "root_volume_kms_key_id" {
+  type        = string
+  description = "Optional customer-managed KMS key ARN/ID for root volume encryption. If null, the account's default aws/ebs key is used. The root volume is always encrypted regardless of this value."
+  default     = null
+}
+
 variable "allow_inbound_cidrs" {
   type        = list(string)
   description = "Optional additional ingress CIDRs on the NAT security group, beyond the default (no inbound from the internet)."

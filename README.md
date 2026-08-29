@@ -101,6 +101,8 @@ sensible default.
 | `private_route_table_ids` | `list(string)` | — (required) | Route table IDs to repoint at the active NAT instance. |
 | `architecture` | `string` | `"x86_64"` | `"x86_64"` or `"arm64"`. Drives AMI SSM parameter and default instance types. |
 | `instance_types` | `list(string)` | arch-based default (e.g. `["t3a.nano","t3.nano"]` or `["t4g.nano"]`) | Candidate instance types for the ASG mixed-instances policy. |
+| `root_volume_size` | `number` | `8` | Root EBS volume size (GB), 8-100 (validated). |
+| `root_volume_kms_key_id` | `optional(string)` | `null` | Optional customer-managed KMS key ARN/ID for root volume encryption. If `null`, the account's default `aws/ebs` key is used. The root volume is always encrypted regardless of this value. |
 | `use_spot` | `bool` | `true` | Whether to prefer Spot capacity. |
 | `spot_on_demand_fallback` | `bool` | `true` | When `use_spot` is true, flip to 100% On-Demand via alarm + Lambda if zero instances stay InService (Spot exhaustion). Ignored when `use_spot` is false. |
 | `spot_fallback_alarm_period_seconds` | `number` | `120` | CloudWatch alarm period for Spot-exhaustion fallback. |

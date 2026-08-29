@@ -568,7 +568,7 @@ continuously — treat as directional, not exact.
 |---|---|---|
 | EC2 compute, Spot (`t4g.nano`/`t3.nano`/`t3a.nano`) | ~$0.50-2/mo | Spot discount vs. on-demand is typically 60-90% but highly variable; not a stable number. |
 | EC2 compute, On-Demand fallback | ~$3.35-4.16/mo | `t4g.nano` ≈ $0.0046/hr; `t3.nano` ≈ $0.0057/hr. Only paid when Spot capacity is unavailable. |
-| EBS root volume (gp3, ~8GB) | ~$0.75-0.80/mo | Negligible; scales with `root_block_device` size if ever made configurable. |
+| EBS root volume (gp3, 8GB default) | ~$0.75-0.80/mo | Negligible; scales with `root_volume_size`. Always encrypted (hardcoded, not a variable); `root_volume_kms_key_id` optionally sets a customer-managed key instead of the account's default `aws/ebs` key, at no extra AWS charge for the encryption itself. |
 | **Elastic IP (persistent)** | **$3.60/mo flat** | **Important, not in the original SPEC interview:** since Feb 2024, AWS charges $0.005/hr for *every* public IPv4 address, attached or not — this is no longer the pre-2024 "free while attached to a running instance" model. This EIP cost is now often **larger than the Spot compute cost itself**, and it is *not* optional/skippable for the module's core persistent-IP goal (§2, §5.3). |
 | Failover Lambda | ~$0/mo | Comfortably inside the *permanent* free tier (1M requests + 400,000 GB-s/mo) — Spot interruptions are rare events, nowhere close to that volume. |
 | Spot fallback Lambda + alarm | ~$0/mo | Same negligible volume as failover Lambda; alarm on a single ASG metric. |
