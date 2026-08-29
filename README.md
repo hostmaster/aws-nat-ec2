@@ -131,3 +131,10 @@ runtime, Terraform state still shows Spot-only until you apply a config
 change. To persist On-Demand after fallback, set `use_spot = false` and
 apply. A blind `terraform apply` with `use_spot = true` resets the ASG
 back to Spot-only.
+
+## Inspiration
+
+This module took inspiration from:
+
+- [int128/terraform-aws-nat-instance](https://github.com/int128/terraform-aws-nat-instance) (archived)
+- [AndrewGuenther/fck-nat](https://github.com/AndrewGuenther/fck-nat)
