@@ -65,6 +65,14 @@ data "aws_iam_policy_document" "lambda_failover" {
   # spot_fallback.tf) publish to SNS as native CloudWatch/Auto Scaling
   # service actions, not through this Lambda, so their KMS access can
   # only come from the key's own key policy -- see README.md.
+  #
+  # This IAM grant is necessary but not sufficient: KMS key policies
+  # take precedence over IAM policies, so the key's own policy must
+  # also either name this role directly or retain the default "enable
+  # IAM policies" statement (principal = account root, kms:*) -- a
+  # restrictive custom key policy that omits both leaves sns:Publish
+  # failing with KMSAccessDeniedException regardless of this grant. See
+  # README.md.
   dynamic "statement" {
     for_each = local.sns_kms_enabled ? [1] : []
     content {
