@@ -130,6 +130,17 @@ resource "aws_autoscaling_group" "nat" {
   vpc_zone_identifier = [var.public_subnet_id]
   health_check_type   = "EC2"
 
+  # Provider default (10m) blocks this resource's apply until the initial
+  # instance is healthy -- fatal for this design, since spot_fallback.tf's
+  # Lambda/alarm depend on this ASG's name/ARN and so cannot be created
+  # until this resource finishes. A cold-start Spot capacity shortage would
+  # otherwise fail the apply before the very fallback infrastructure meant
+  # to recover from it exists. Skipping the wait means apply success
+  # reflects the ASG API call, not instance health; that's the correct
+  # trade-off here since actual capacity issues are handled at runtime by
+  # the Spot-fallback alarm/Lambda, not by terraform apply.
+  wait_for_capacity_timeout = "0"
+
   # GroupInServiceInstances is opt-in; required by the Spot-exhaustion
   # fallback alarm (spot_fallback.tf). Without this, the metric never
   # publishes and treat_missing_data would false-alarm every deployment.
