@@ -53,15 +53,6 @@ def is_spot_only_distribution(instances_distribution):
     return base == 0 and percentage == 0
 
 
-def has_launch_in_progress(group):
-    """Return True when the ASG still has instances launching."""
-    pending_states = {"Pending", "Pending:Wait", "Pending:Proceed", "Warming"}
-    for instance in group.get("Instances", []):
-        if instance.get("LifecycleState") in pending_states:
-            return True
-    return False
-
-
 def in_service_count(group):
     """Return the number of InService instances in the group."""
     return sum(
@@ -72,7 +63,16 @@ def in_service_count(group):
 
 
 def should_flip_to_on_demand(group):
-    """Return True when Spot-only ASG is stuck with no healthy or pending capacity."""
+    """Return True when Spot-only ASG has no InService capacity.
+
+    Does not defer for a pending Spot launch: CloudWatch only re-invokes
+    this Lambda on an alarm state *transition*, not on every evaluation
+    while the alarm remains ALARM. Deferring here risks the fallback never
+    running again if that particular pending launch later fails while the
+    alarm stays in ALARM. Flipping the distribution while a Spot launch is
+    still in flight is harmless -- it only changes the *next* launch
+    attempt, not the one already underway.
+    """
     min_size = group.get("MinSize", 1)
     if in_service_count(group) >= min_size:
         return False
@@ -89,10 +89,6 @@ def should_flip_to_on_demand(group):
             distribution.get("OnDemandBaseCapacity"),
             distribution.get("OnDemandPercentageAboveBaseCapacity"),
         )
-        return False
-
-    if has_launch_in_progress(group):
-        logger.info("ASG still has instances launching, deferring fallback")
         return False
 
     return True

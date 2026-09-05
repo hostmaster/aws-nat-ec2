@@ -80,9 +80,14 @@ class TestShouldFlipToOnDemand(unittest.TestCase):
         group = spot_only_group(instances=[{"LifecycleState": "InService", "InstanceId": "i-1"}])
         self.assertFalse(fallback.should_flip_to_on_demand(group))
 
-    def test_pending_launch_no_flip(self):
+    def test_pending_launch_still_flips(self):
+        # A pending Spot launch is not a substitute for InService capacity:
+        # deferring here relies on a second alarm invocation that may never
+        # come (CloudWatch only invokes alarm actions on a state
+        # transition), which can leave the ASG stuck empty indefinitely if
+        # this particular pending launch later fails.
         group = spot_only_group(instances=[{"LifecycleState": "Pending", "InstanceId": "i-1"}])
-        self.assertFalse(fallback.should_flip_to_on_demand(group))
+        self.assertTrue(fallback.should_flip_to_on_demand(group))
 
     def test_stuck_spot_only_flips(self):
         group = spot_only_group()
