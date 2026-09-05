@@ -107,7 +107,15 @@ def build_on_demand_distribution(current_distribution):
 
 
 def flip_to_on_demand(asg_name, client=autoscaling):
-    """Flip a Spot-only ASG to 100% On-Demand, preserving its launch template overrides."""
+    """Flip a Spot-only ASG to 100% On-Demand by updating InstancesDistribution only.
+
+    LaunchTemplate is deliberately omitted from the update: both fields of
+    MixedInstancesPolicy are independently optional on UpdateAutoScalingGroup,
+    and any properties not specified are left unchanged. Including
+    LaunchTemplate (even unchanged) would trigger AWS's launch-template
+    prerequisite checks -- e.g. iam:PassRole for an attached instance
+    profile -- which this Lambda's role does not grant.
+    """
     group = describe_asg(asg_name, client=client)
     if group is None:
         logger.warning("ASG %s not found", asg_name)
@@ -122,7 +130,6 @@ def flip_to_on_demand(asg_name, client=autoscaling):
     client.update_auto_scaling_group(
         AutoScalingGroupName=asg_name,
         MixedInstancesPolicy={
-            "LaunchTemplate": mixed_policy["LaunchTemplate"],
             "InstancesDistribution": new_distribution,
         },
     )
