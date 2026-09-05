@@ -145,6 +145,17 @@ variable "sns_topic_arn" {
   default     = null
 }
 
+variable "sns_topic_kms_key_arn" {
+  type        = string
+  description = "ARN of the customer-managed KMS key used to encrypt sns_topic_arn, if any. Grants the failover Lambda's role kms:GenerateDataKey*/kms:Decrypt on this key so its own sns:Publish call succeeds. Does not cover the Spot-fallback alarm, the Lambda backstop alarms, or the ASG notification -- those publish to SNS as native CloudWatch/Auto Scaling service actions, not through this module's Lambda code, so they instead require statements on the key's own key policy. See README.md for the exact statements. Ignored if sns_topic_arn is unset (validated); has no effect if the topic uses the default alias/aws/sns key."
+  default     = null
+
+  validation {
+    condition     = var.sns_topic_kms_key_arn == null || var.sns_topic_arn != null
+    error_message = "sns_topic_kms_key_arn requires sns_topic_arn to also be set."
+  }
+}
+
 variable "log_retention_days" {
   type        = number
   description = "Retention (days) for both Lambdas' CloudWatch Log Groups. Must be a value CloudWatch Logs accepts for retention_in_days."
@@ -161,4 +172,5 @@ variable "log_retention_days" {
 
 locals {
   notifications_enabled = var.sns_topic_arn != null
+  sns_kms_enabled       = var.sns_topic_kms_key_arn != null
 }
