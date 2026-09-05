@@ -84,8 +84,14 @@ inputs = {
 ```
 
 For a second AZ, add a second Terragrunt unit calling this same module
-with that AZ's `public_subnet_id`/`private_route_table_ids` — this
-module deliberately has no multi-AZ logic of its own (SPEC §3/§4.1).
+with that AZ's `public_subnet_id`/`private_route_table_ids` and a
+**distinct `name_prefix`** — this module deliberately has no multi-AZ
+logic of its own (SPEC §3/§4.1). `name_prefix` must be unique per
+module call: unlike the ASG/IAM role/EventBridge rule (which get
+Terraform's own randomized `name_prefix` suffix), the Lambda function
+names, CloudWatch Log Group names, and CloudWatch alarm names are
+derived directly from it with no added uniqueness, so two calls
+sharing the same value collide on those resources.
 
 ## Inputs
 
@@ -95,7 +101,7 @@ sensible default.
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `name_prefix` | `string` | — (required) | Prefix for resource names and tags. Must be 20 characters or fewer (validated) — combined with this module's own resource-name suffixes and Terraform's `name_prefix` random suffix, a longer value can exceed AWS's 64-character limit on EventBridge rule / IAM role names. |
+| `name_prefix` | `string` | — (required) | Prefix for resource names and tags. Must be 20 characters or fewer (validated) — combined with this module's own resource-name suffixes and Terraform's `name_prefix` random suffix, a longer value can exceed AWS's 64-character limit on EventBridge rule / IAM role names. **Must also be unique per module call** (e.g. per AZ): the Lambda function, CloudWatch Log Group, and CloudWatch alarm names are derived directly from it with no added uniqueness, unlike the ASG/IAM role/EventBridge rule. |
 | `vpc_id` | `string` | — (required) | Existing VPC ID. |
 | `public_subnet_id` | `string` | — (required) | Existing public subnet the NAT instance runs in. AZ is derived from this subnet. |
 | `private_route_table_ids` | `list(string)` | — (required) | Route table IDs to repoint at the active NAT instance. |
