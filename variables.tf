@@ -1,6 +1,6 @@
 variable "name_prefix" {
   type        = string
-  description = "Prefix for resource names and tags."
+  description = "Prefix for resource names and tags. Must be unique per module call (e.g. per AZ) -- the Lambda function, CloudWatch Log Group, and CloudWatch alarm names are derived directly from this value with no added uniqueness (unlike the ASG/IAM role/EventBridge rule, which get Terraform's own randomized name_prefix suffix), so reusing it across module calls collides on those resources."
 
   validation {
     condition     = length(var.name_prefix) > 0
