@@ -116,6 +116,22 @@ class TestFlipToOnDemand(unittest.TestCase):
         self.assertEqual(distribution["OnDemandPercentageAboveBaseCapacity"], 100)
 
     @patch.object(fallback, "autoscaling")
+    def test_update_omits_launch_template(self, mock_autoscaling):
+        # The Lambda's role grants only UpdateAutoScalingGroup and describe
+        # permissions -- no iam:PassRole. AWS's launch-template prerequisite
+        # checks (including iam:PassRole for an attached instance profile)
+        # apply whenever LaunchTemplate is present in the update payload,
+        # even unchanged, so it must never be included here.
+        mock_autoscaling.describe_auto_scaling_groups.return_value = {
+            "AutoScalingGroups": [spot_only_group()],
+        }
+
+        fallback.flip_to_on_demand("test-asg", client=mock_autoscaling)
+
+        call_kwargs = mock_autoscaling.update_auto_scaling_group.call_args.kwargs
+        self.assertNotIn("LaunchTemplate", call_kwargs["MixedInstancesPolicy"])
+
+    @patch.object(fallback, "autoscaling")
     def test_no_op_when_healthy(self, mock_autoscaling):
         mock_autoscaling.describe_auto_scaling_groups.return_value = {
             "AutoScalingGroups": [
