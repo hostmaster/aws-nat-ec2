@@ -83,12 +83,22 @@ UNIT
 
 systemctl daemon-reload
 
+# Tracks whether this instance can actually forward traffic (MASQUERADE
+# running + source/dest check disabled). Route publication below is
+# gated on this: the ASG only runs EC2 status checks (compute.tf), so a
+# cloud-init failure here doesn't make the ASG treat the instance as
+# unhealthy, and publishing routes to a non-functional NAT would
+# blackhole traffic instead of merely leaving this script's own exit
+# code non-zero.
+NAT_FUNCTIONAL=1
+
 # Guarded like the steps below: if iptables failed to install above,
 # nat-setup.sh fails and this returns non-zero. Left bare, that would
 # trip set -e and take down everything after it, including the EIP and
 # route-table steps that have nothing to do with iptables.
 if ! systemctl enable --now nat-setup.service; then
   FAILED=1
+  NAT_FUNCTIONAL=0
 fi
 
 # Three independent, self-healing steps follow (source/dest check, EIP
@@ -115,6 +125,7 @@ if ! retry aws ec2 modify-instance-attribute \
   --instance-id "$INSTANCE_ID" \
   --no-source-dest-check; then
   FAILED=1
+  NAT_FUNCTIONAL=0
 fi
 
 # EIP association is AWS-side state, unaffected by a plain reboot —
@@ -127,36 +138,44 @@ if ! retry aws ec2 associate-address \
   FAILED=1
 fi
 
-# Route table IDs arrive as one comma-separated string. ${route_table_ids}
-# is substituted by templatefile() before bash ever parses this file, so
-# the token left behind has no leading $ — IFS word-splitting only fires
-# on the *result* of a bash expansion, never on a literal token, so
-# `for RTB_ID in ${route_table_ids}` ran exactly once with the whole
-# comma-joined string as a single, invalid --route-table-id value.
-# Assigning it to a real bash variable first forces the split to happen
-# where IFS actually applies.
-route_table_ids_csv="${route_table_ids}"
-IFS=',' read -ra route_table_id_list <<<"$route_table_ids_csv"
-for RTB_ID in "$${route_table_id_list[@]}"; do
-  # A route table with no pre-existing 0.0.0.0/0 route (first-ever launch
-  # into it, e.g. a from-scratch deploy) rejects ReplaceRoute with
-  # InvalidParameterValue ("Use CreateRoute instead"); try CreateRoute
-  # once, cheaply, before falling back to the retried ReplaceRoute that
-  # handles every later reboot/failover, where the route already exists.
-  if aws ec2 create-route \
-    --region "$REGION" \
-    --route-table-id "$RTB_ID" \
-    --destination-cidr-block 0.0.0.0/0 \
-    --instance-id "$INSTANCE_ID" >/dev/null 2>&1; then
-    continue
-  fi
-  if ! retry aws ec2 replace-route \
-    --region "$REGION" \
-    --route-table-id "$RTB_ID" \
-    --destination-cidr-block 0.0.0.0/0 \
-    --instance-id "$INSTANCE_ID"; then
-    FAILED=1
-  fi
-done
+# Publishing routes to a non-functional NAT would actively blackhole
+# traffic that would otherwise still reach the internet via whatever
+# route table entry it repoints. Only proceed once forwarding/MASQUERADE
+# and source/dest-check disabling are confirmed working.
+if ((NAT_FUNCTIONAL)); then
+  # Route table IDs arrive as one comma-separated string. ${route_table_ids}
+  # is substituted by templatefile() before bash ever parses this file, so
+  # the token left behind has no leading $ — IFS word-splitting only fires
+  # on the *result* of a bash expansion, never on a literal token, so
+  # `for RTB_ID in ${route_table_ids}` ran exactly once with the whole
+  # comma-joined string as a single, invalid --route-table-id value.
+  # Assigning it to a real bash variable first forces the split to happen
+  # where IFS actually applies.
+  route_table_ids_csv="${route_table_ids}"
+  IFS=',' read -ra route_table_id_list <<<"$route_table_ids_csv"
+  for RTB_ID in "$${route_table_id_list[@]}"; do
+    # A route table with no pre-existing 0.0.0.0/0 route (first-ever launch
+    # into it, e.g. a from-scratch deploy) rejects ReplaceRoute with
+    # InvalidParameterValue ("Use CreateRoute instead"); try CreateRoute
+    # once, cheaply, before falling back to the retried ReplaceRoute that
+    # handles every later reboot/failover, where the route already exists.
+    if aws ec2 create-route \
+      --region "$REGION" \
+      --route-table-id "$RTB_ID" \
+      --destination-cidr-block 0.0.0.0/0 \
+      --instance-id "$INSTANCE_ID" >/dev/null 2>&1; then
+      continue
+    fi
+    if ! retry aws ec2 replace-route \
+      --region "$REGION" \
+      --route-table-id "$RTB_ID" \
+      --destination-cidr-block 0.0.0.0/0 \
+      --instance-id "$INSTANCE_ID"; then
+      FAILED=1
+    fi
+  done
+else
+  echo "Skipping route table update: NAT is not functional (forwarding/MASQUERADE or source/dest-check disable failed)" >&2
+fi
 
 exit "$FAILED"
