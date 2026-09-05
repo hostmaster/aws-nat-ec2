@@ -56,6 +56,23 @@ data "aws_iam_policy_document" "lambda_failover" {
       resources = [var.sns_topic_arn]
     }
   }
+
+  # Only relevant when sns_topic_arn points at a topic encrypted with a
+  # customer-managed KMS key (sns_topic_kms_key_arn) -- the AWS-managed
+  # alias/aws/sns key needs no such grant. This covers only this
+  # Lambda's own sns:Publish call above; the Spot-fallback alarm,
+  # backstop alarms, and ASG notification (observability.tf,
+  # spot_fallback.tf) publish to SNS as native CloudWatch/Auto Scaling
+  # service actions, not through this Lambda, so their KMS access can
+  # only come from the key's own key policy -- see README.md.
+  dynamic "statement" {
+    for_each = local.sns_kms_enabled ? [1] : []
+    content {
+      sid       = "DecryptSnsTopicKey"
+      actions   = ["kms:GenerateDataKey*", "kms:Decrypt"]
+      resources = [var.sns_topic_kms_key_arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "lambda_failover" {
