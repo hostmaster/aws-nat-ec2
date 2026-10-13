@@ -411,7 +411,7 @@ Still deferred, intended approach when resumed:
 Small files, explicit interfaces, clean separation by concern:
 
 ```text
-terraform-aws-nat-instance-al2023/
+aws-nat-ec2/
 ├── versions.tf                   # terraform + provider version constraints
 ├── variables.tf                  # module inputs (table in README.md, §7.1 here just points there)
 ├── outputs.tf                    # module outputs (table in README.md, §7.2 here just points there)
@@ -420,8 +420,8 @@ terraform-aws-nat-instance-al2023/
 ├── eip.tf                        # EIP resource (conditional on eip_allocation_id)
 ├── iam.tf                        # instance role, instance profile, policies
 ├── failover.tf                   # EventBridge rule, proactive-failover Lambda, Lambda IAM role (§5.2)
-├── spot_fallback.tf               # Spot-exhaustion alarm, fallback Lambda, Lambda IAM role (§5.4)
-├── observability.tf                # SNS notifications, Lambda backstop alarms, log group retention (§7.3)
+├── spot_fallback.tf              # Spot-exhaustion alarm, fallback Lambda, Lambda IAM role (§5.4)
+├── observability.tf              # SNS notifications, Lambda backstop alarms, log group retention (§4.2)
 ├── scripts/
 │   ├── bootstrap.sh.tpl           # user-data template (NAT setup, EIP, routes)
 │   ├── lambda_failover.py         # proactive failover Lambda source
