@@ -1,76 +1,55 @@
-# SPEC.md — AWS NAT Instance Terraform Module
+# SPEC — aws-nat-ec2
 
 ## 1. Overview
 
-A self-hosted, cost-optimized alternative to AWS Managed NAT Gateway, distributed
-as a single reusable Terraform module. Provides outbound-only IPv4 internet
-access for private subnets via an EC2 instance running AL2023, with optional
-Spot capacity for further cost savings. Consumed via Terragrunt, one module
-instantiation per Availability Zone.
+Reusable Terraform module: outbound-only IPv4 internet access for private
+subnets via an AL2023 EC2 NAT instance, optionally on Spot. Consumed via
+Terragrunt — one module call per Availability Zone.
 
-**Problem it solves:** Managed NAT Gateway is expensive at scale (hourly +
-per-GB processing charges). A correctly-configured NAT instance is materially
-cheaper, especially on Spot, but the existing tool the team relies on
-(`terraform-aws-nat-instance`) is built on an outdated Amazon Linux version
-and needs replacing.
+Managed NAT Gateway is expensive at scale (hourly + per-GB processing).
+A correctly configured NAT instance is materially cheaper, especially on
+Spot. This module replaces older Amazon Linux–based NAT instance tooling.
 
 ## 2. Goals
 
-- Provide NAT functionality (IP forwarding + MASQUERADE) equivalent to a
-  Managed NAT Gateway for one or more private subnets in a single AZ.
-- Run on AL2023 (standard public AMI, resolved via SSM Parameter Store —
-  no custom AMI baking unless later proven unavoidable).
-- Support both On-Demand and Spot capacity. When `use_spot = true`, prefer
-  Spot via the Mixed Instances Policy; when Spot capacity is unavailable
-  across every configured pool in the AZ, fall back to On-Demand via an
-  explicit safety net (CloudWatch alarm + Lambda policy flip; details under Spot exhaustion fallback below).
-  A static `use_spot = false` toggle remains available
-  for callers who want 100% On-Demand without the fallback machinery.
-- Support both x86_64 and arm64 (Graviton) architectures.
-- Minimize downtime on Spot interruption via proactive replacement
-  (EventBridge spot-interruption-warning → Lambda → ASG), in addition to
-  standard reactive ASG replacement on instance failure.
-- Keep the NAT instance's public IP persistent (same Elastic IP) across
-  instance replacement.
-- Ship as a single, small-file, clearly-separated Terraform module with
-  explicit inputs/outputs, consumable via Terragrunt.
-- Access instances via SSM Session Manager only — no SSH, no key pairs,
-  no inbound port 22.
+- NAT (IP forwarding + MASQUERADE) equivalent to Managed NAT Gateway for
+  one or more private subnets in a single AZ.
+- AL2023 public AMI via SSM Parameter Store — no custom AMI.
+- Spot via Mixed Instances Policy when `use_spot = true`, with an
+  explicit On-Demand safety net when Spot capacity is unavailable
+  (CloudWatch alarm + Lambda). `use_spot = false` for static On-Demand.
+- x86_64 and arm64 (Graviton).
+- Proactive Spot-interruption replacement (EventBridge → Lambda → ASG)
+  plus standard reactive ASG replacement on failure.
+- Persistent public IP (Elastic IP) across instance replacements.
+- Small, single Terraform module with explicit inputs/outputs.
+- SSM Session Manager only — no SSH, no key pairs, no inbound port 22.
 
 ## 3. Non-Goals
 
-- No IPv6 / NAT64 support (IPv4 only).
-- No VPC, subnet, or route table *creation* — the module consumes an
-  existing VPC, an existing public subnet, and existing private-subnet
-  route table IDs. It never creates network topology.
-- No multi-AZ orchestration inside the module — one module call = one AZ,
-  one NAT instance, one EIP. Multi-AZ is achieved by calling the module
-  multiple times from Terragrunt.
-- No warm-standby / always-on second instance. Exactly one running
-  instance per AZ at any time (cost priority over near-zero downtime).
-- No traffic shaping, QoS, bandwidth monitoring dashboards, deep packet
-  inspection, or any traffic manipulation beyond standard IP forwarding
-  and MASQUERADE.
-- No custom AMI / Packer pipeline unless a standard AL2023 AMI proves
-  insufficient. (If later required, AMI build lives in a **separate**
-  repository, not this one.)
-- No multi-region or multi-account support inside the module (single
-  account, single region; Terragrunt handles repetition across envs).
-- No automated test suite in this phase (explicitly deferred — see Testing Strategy below).
-- No custom NAT-functionality health check (relies on standard EC2 status
-  checks only, not an application-level "is NAT actually forwarding
-  traffic" probe).
+- IPv6 / NAT64 (IPv4 only).
+- Creating VPC, subnets, or route tables — the module consumes existing
+  topology only.
+- Multi-AZ orchestration inside the module — one call = one AZ, one NAT
+  instance, one EIP. Multi-AZ = multiple Terragrunt calls.
+- Warm standby / second always-on instance. Exactly one running instance
+  per AZ (cost over near-zero downtime).
+- Traffic shaping, QoS, bandwidth dashboards, DPI, or anything beyond IP
+  forwarding and MASQUERADE.
+- Custom AMI / Packer pipeline in this repo.
+- Multi-region or multi-account logic inside the module.
+- Application-level NAT health checks (EC2 status checks only).
+- Full automated coverage of bootstrap shell and Terraform module logic
+  (Lambda unit tests exist; bats / `terraform test` are deferred).
 
 ## 4. Architecture
 
 ### 4.1 Topology
 
-- One NAT instance per AZ. Each module call provisions exactly one
-  Auto Scaling Group (`min=max=desired=1`) in one public subnet, serving
-  N private subnets (via N route table updates) in that same AZ.
-- Terragrunt is responsible for invoking the module once per AZ that
-  needs NAT egress, passing that AZ's public subnet and the list of
-  private route table IDs to repoint.
+One NAT instance per AZ. Each module call provisions one Auto Scaling
+Group (`min=max=desired=1`) in one public subnet, serving N private
+subnets via N route table updates in that AZ. Terragrunt invokes the
+module once per AZ that needs egress.
 
 ```text
                  ┌────────────────────────────┐
@@ -84,398 +63,284 @@ and needs replacing.
         (repeat module call per AZ, via Terragrunt)
 ```
 
-### 4.2 Components per module instantiation (per AZ)
+### 4.2 Components (per AZ)
 
-- **Launch Template** — AMI (SSM-resolved AL2023, arch-selectable),
+- **Launch Template** — SSM-resolved AL2023 AMI (arch-selectable),
   instance type(s), IAM instance profile, security group, user-data
-  bootstrap script, `network_interfaces.source_dest_check = false`.
+  bootstrap. `source_dest_check` is disabled at boot via
+  `ec2:ModifyInstanceAttribute` (Launch Template has no argument for it).
 - **Auto Scaling Group** — `min=max=desired=1`, single public subnet,
-  EC2 status check health check, Mixed Instances Policy (Spot when
-  `use_spot = true`, 100% On-Demand when `use_spot = false`). Spot
-  exhaustion fallback (below) when `spot_on_demand_fallback = true`
-  (the default).
-- **Elastic IP** — allocated by the module by default (bring-your-own alternative under
-  Assumptions Requiring Confirmation), reassociated to the current instance by
-  the boot script.
-- **Security Group** — egress-open; ingress defaults to allowing all
-  traffic from the VPC's own CIDR block(s) (looked up via the `vpc_id`
-  input) — **required**, not optional: AWS security groups filter
-  routed traffic through an instance's ENI too, not just traffic
-  destined for the instance itself, so without this the NAT instance
-  silently drops all forwarded packets regardless of `source_dest_check`
-  or iptables (found via a real `apply` failure at T18, 2026-07-22).
-  Nothing inbound from the internet; optional additional ingress via
-  `allow_inbound_cidrs` for anything beyond the VPC's own range (e.g. a
-  peered VPC or on-prem range via VPN/Direct Connect).
-- **IAM Role / Instance Profile** — grants the instance permission to
-  associate its own EIP, replace routes in the configured route tables,
-  and use SSM Session Manager.
-- **EventBridge Rule + Lambda + Lambda IAM Role** — proactive failover on
-  Spot interruption warning (details under Proactive failover below).
-- **CloudWatch Alarm + Fallback Lambda + Lambda IAM Role** — Spot
-  exhaustion fallback to On-Demand (details below). Omitted when `use_spot =
-  false` or `spot_on_demand_fallback = false`.
-- **SNS notifications + backstop alarms** (all opt-in, BYO topic only) — reactive/proactive failover notifications, Lambda
-  `Errors`/`Throttles` alarms, and an independent signal on the Spot-
-  exhaustion alarm. Nothing here changes NAT behavior; it's purely
-  observability. Omitted entirely when `sns_topic_arn = null`.
-- **CloudWatch Log Groups** (both Lambdas) — explicit, with
-  `retention_in_days = var.log_retention_days`, created ahead of each
-  function so neither one falls back to AWS's implicit never-expire
-  default.
+  EC2 status-check health, Mixed Instances Policy (Spot or 100%
+  On-Demand). Spot exhaustion fallback when
+  `spot_on_demand_fallback = true` (default).
+- **Elastic IP** — allocated by the module by default (optional
+  bring-your-own via `eip_allocation_id`); reassociated at boot.
+- **Security Group** — egress open; ingress allows the VPC's own CIDR
+  block(s) looked up from `vpc_id`. Required: security groups filter
+  routed traffic through the ENI, so without VPC CIDR ingress the NAT
+  silently drops forwarded packets. Optional extra ingress via
+  `allow_inbound_cidrs` (peered VPC, VPN/Direct Connect, etc.). Nothing
+  inbound from the internet by default.
+- **IAM Role / Instance Profile** — associate EIP, replace routes, SSM.
+- **EventBridge + failover Lambda** — proactive Spot interruption
+  handling.
+- **CloudWatch alarm + fallback Lambda** — Spot exhaustion → On-Demand.
+  Omitted when `use_spot = false` or `spot_on_demand_fallback = false`.
+- **SNS notifications + backstop alarms** (opt-in, BYO topic) —
+  reactive/proactive failover notices, Lambda `Errors`/`Throttles`
+  alarms, and a signal on the Spot-exhaustion alarm. Observability only;
+  omitted when `sns_topic_arn = null`.
+- **CloudWatch Log Groups** for both Lambdas — explicit
+  `retention_in_days = var.log_retention_days` so neither falls back to
+  AWS's never-expire default.
 
-### 4.3 Networking / data flow
+### 4.3 Networking
 
-- Standard, well-known NAT recipe only:
-  - `net.ipv4.ip_forward=1` (persisted via `/etc/sysctl.d`)
-  - `iptables -t nat -A POSTROUTING -o <primary-interface> -j MASQUERADE`
-  - `source_dest_check = false` on the instance's primary ENI. Disabled
-    by a boot-time `ec2:ModifyInstanceAttribute` call in the bootstrap
-    script (T11, 2026-07-22), the same self-service pattern as EIP
-    association/route repointing — **not** set declaratively on the
-    Launch Template as originally assumed here:
-    `aws_launch_template` has no argument for this at all (confirmed
-    via `terraform providers schema`), so the original plan wasn't
-    achievable as written.
-- No ENI hot-swap, no secondary ENIs, no bandwidth/conntrack tuning.
-  Traffic path is exactly: private subnet → route table `0.0.0.0/0` →
-  NAT instance → MASQUERADE → internet.
+Standard NAT recipe:
+
+- `net.ipv4.ip_forward=1` (persisted under `/etc/sysctl.d`)
+- `iptables -t nat -A POSTROUTING -o <primary-interface> -j MASQUERADE`
+- `source_dest_check = false` on the primary ENI (boot-time API call)
+
+No ENI hot-swap, secondary ENIs, or conntrack tuning. Path: private
+subnet → route table `0.0.0.0/0` → NAT instance → MASQUERADE → internet.
 
 ## 5. Failover Behavior
 
-### 5.1 Reactive failover (default ASG behavior)
+### 5.1 Reactive failover
 
-If the NAT instance fails EC2 status checks (or is terminated for any
-reason not caught by proactive failover above), the ASG launches a replacement instance per
-its standard behavior. On boot, the new instance's bootstrap script:
+If the instance fails EC2 status checks (or is terminated without a Spot
+warning), the ASG launches a replacement. On boot the bootstrap script:
 
 1. Re-associates the persistent EIP to itself.
-2. Calls `ec2:ReplaceRoute` on each configured private route table ID,
+2. Calls `ec2:ReplaceRoute` on each `private_route_table_ids` entry,
    targeting its own instance ID.
 
-Expected downtime: roughly the new instance's boot + bootstrap time
-(typically well under two minutes).
+Expected downtime: boot + bootstrap (typically under two minutes).
 
 ### 5.2 Proactive failover (Spot interruption warning)
 
-To shrink the downtime window further when running on Spot:
+When running on Spot:
 
-1. An **EventBridge rule** matches `EC2 Spot Instance Interruption
-   Warning` events for instances belonging to this ASG (filtered by
-   instance/ASG tag).
-2. The rule triggers a **Lambda function** that calls
-   `autoscaling:TerminateInstanceInAutoScalingGroup` with
-   `ShouldDecrementDesiredCapacity=false` on the flagged instance.
-3. This causes the ASG to launch a replacement **immediately**, rather
-   than waiting for the instance to actually disappear at the end of the
-   two-minute Spot warning window — the replacement is typically already
-   booting (or up) before the interrupted instance is reclaimed.
-4. The new instance's bootstrap script performs the same EIP + route
-   table steps as in reactive failover above.
+1. An EventBridge rule matches `EC2 Spot Instance Interruption Warning`
+   for instances in this ASG (filtered by tag).
+2. A Lambda calls `autoscaling:TerminateInstanceInAutoScalingGroup` with
+   `ShouldDecrementDesiredCapacity=false`.
+3. The ASG launches a replacement immediately — usually before the
+   two-minute warning window ends — instead of waiting for reclaim.
+4. The new instance runs the same EIP + route bootstrap as reactive
+   failover.
 
-This is a best-effort shrink of the downtime window, not a guarantee of
-zero packet loss — there is no warm standby in this design (by choice;
-see Non-Goals).
+Best-effort shorter downtime, not zero packet loss (no warm standby).
 
 ### 5.3 Persistent EIP
 
-- One Elastic IP per module instantiation (per AZ), allocated once and
-  never released by ordinary instance replacement.
-- "Persistent" here means: the public IP a private-subnet resource
-  appears to originate from stays the same across NAT instance
-  replacements — not that the IP survives module deletion (see destroy-behavior
-  default under Assumptions Requiring Confirmation).
-- Reassociation is performed by the instance itself at boot time via
-  `ec2:AssociateAddress`, using its own IAM instance-profile permissions.
-  No Lambda or external orchestrator is involved in this step.
+One Elastic IP per module call (per AZ), kept across ordinary instance
+replacement. "Persistent" means the egress public IP seen by private
+workloads stays stable — not that the IP survives module destroy (see
+EIP lifecycle below). Reassociation is self-service at boot via
+`ec2:AssociateAddress`; no Lambda involved.
 
-### 5.4 Spot exhaustion fallback (T21)
+### 5.4 Spot exhaustion fallback
 
 When `use_spot = true`, the ASG targets 100% Spot
 (`on_demand_percentage_above_base_capacity = 0`). AWS does **not**
-natively substitute On-Demand when every configured Spot pool in the AZ
-is empty — the ASG keeps retrying Spot. For `desired = 1`, that leaves
-private subnets without egress until Spot capacity returns.
+natively substitute On-Demand when every configured Spot pool is empty —
+the ASG keeps retrying Spot, leaving private subnets without egress.
 
-**Mechanism:**
+Mechanism (when `spot_on_demand_fallback = true`):
 
-1. A **CloudWatch alarm** fires when `GroupInServiceInstances < 1` for a
-   sustained period while Spot-only policy is active
-   (`spot_on_demand_fallback = true`, the default). The ASG must publish
-   this metric via `enabled_metrics` (set in `compute.tf` when fallback
-   is enabled — it is opt-in per AWS).
-2. A **fallback Lambda** (`scripts/lambda_spot_fallback.py`) calls
-   `UpdateAutoScalingGroup` to set `OnDemandPercentageAboveBaseCapacity =
-   100`, forcing the next launch as On-Demand. It skips the flip while
-   instances are still `Pending`, to avoid false positives during normal
-   proactive failover.
-3. The new instance's bootstrap script performs the same EIP + route
-   table steps as in reactive failover above.
+1. A CloudWatch alarm fires on `GroupInServiceInstances < 1` for a
+   sustained period. The ASG publishes this metric via `enabled_metrics`
+   in `compute.tf` (opt-in per AWS).
+2. A fallback Lambda (`scripts/lambda_spot_fallback.py`) calls
+   `UpdateAutoScalingGroup` to set
+   `OnDemandPercentageAboveBaseCapacity = 100`. It skips the flip while
+   instances are still `Pending` (avoids false positives during proactive
+   failover).
+3. The new instance runs the same EIP + route bootstrap.
 
-This is distinct from proactive failover (Spot *interruption*) and from toggling
-`use_spot = false` (static config change). Revert to Spot after
-exhaustion is **operator/Terraform-driven**; automatic revert is out of
-scope.
+This is separate from Spot *interruption* failover and from setting
+`use_spot = false`. Revert to Spot after exhaustion is
+operator/Terraform-driven; automatic revert is out of scope.
 
-**Why a CloudWatch alarm, not an EventBridge launch-failure event:** the
-native alternative is EventBridge's `EC2 Instance Launch Unsuccessful`
-(source `aws.autoscaling`) — the same style of signal already used for
-`EC2 Spot Instance Interruption Warning` under proactive failover. It's rejected here
-because it fires per failed launch attempt across every Spot pool the
-ASG retries, not once per sustained-exhaustion episode, and AWS re:Post
-confirms these events can be delayed or absent during retries. A
-"zero InService instances" alarm over a sustained window gives that
-debounce for free, at the cost of detection latency.
+**Why an alarm instead of EventBridge `EC2 Instance Launch Unsuccessful`:**
+that event fires per failed launch attempt across every Spot pool retry,
+not once per sustained exhaustion, and can be delayed or absent during
+retries. A sustained zero-InService alarm provides debounce at the cost
+of detection latency.
 
-**`capacity_rebalance = var.use_spot`** (`compute.tf`) is complementary:
-with `max = 1` the ASG has no headroom to pre-launch a replacement
-before terminating the flagged instance, so it can't get the full
-zero-downtime benefit capacity rebalancing usually provides. It still
-helps because it reacts to the earlier *rebalance recommendation*
-signal, ahead of the 2-minute interruption warning that proactive failover's
-Lambda waits for.
+**`capacity_rebalance = var.use_spot`** (`compute.tf`) is complementary.
+With `max = 1` there is no headroom to pre-launch before terminate, so
+it cannot deliver full zero-downtime rebalancing, but it still reacts to
+the earlier rebalance recommendation ahead of the two-minute
+interruption warning.
 
 ### 5.5 Route table continuity
 
-- The bootstrap script, using the instance's own IAM role, calls
-  `ec2:ReplaceRoute` for each route table ID in `private_route_table_ids`,
-  setting `0.0.0.0/0` to point at its own instance ID.
-- This is self-service (no separate Lambda/controller) — the same
-  pattern as EIP association, run once at boot.
+At boot, the instance's IAM role calls `ec2:ReplaceRoute` for each ID in
+`private_route_table_ids`, pointing `0.0.0.0/0` at itself. Same
+self-service pattern as EIP association.
 
 ## 6. AMI Strategy
 
-- No Packer, no custom AMI. The Launch Template resolves the latest
-  AL2023 AMI via the public SSM parameter:
-  - x86_64: `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`
-  - arm64: `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`
-- `architecture` input selects which parameter (and default instance
-  type family) is used.
-- If a future requirement can't be met by boot-time configuration alone
-  (e.g. needing pre-baked packages not available in seconds at boot),
-  a Packer build would live in a **separate repository** — out of scope
-  for this module unless that need materializes.
+No Packer, no custom AMI. The Launch Template resolves the latest AL2023
+AMI via public SSM parameters:
+
+- x86_64: `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`
+- arm64: `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`
+
+`architecture` selects the parameter and default instance type family.
 
 ## 7. Module Interface
 
-### 7.1 Inputs
+### 7.1 Inputs / 7.2 Outputs
 
-Full table, with types, defaults, and descriptions: [README.md Inputs](../README.md#inputs) — moved there (2026-07-22) so it's visible on
-the repo's GitHub front page without opening this file. README.md is the
-source of truth for this table; don't duplicate it back here.
+Source of truth: [README Inputs](../README.md#inputs) and
+[README Outputs](../README.md#outputs). Do not duplicate the tables here.
 
-Note on `release_eip_on_destroy`: ignored if `eip_allocation_id` is
-supplied (caller owns lifecycle) — see Assumptions Requiring Confirmation.
+Notes:
 
-Note on `root_volume_kms_key_id`: a customer-managed key needs its own
-key policy changes before instance launches will succeed — see the
-caveat in README.md's Inputs table for the exact statements required.
+- `release_eip_on_destroy` is ignored when `eip_allocation_id` is set
+  (caller owns lifecycle) — see EIP lifecycle below.
+- A customer-managed `root_volume_kms_key_id` needs key-policy changes
+  before launches succeed — see the README Inputs caveat.
 
-### 7.2 Outputs
+### 7.3 IAM Permissions
 
-Full table, with descriptions: [README.md Outputs](../README.md#outputs)
-— moved there (2026-07-22) for the same GitHub front-page visibility
-reason as the Inputs section. README.md is the source of truth; don't duplicate it
-back here.
-
-### 7.3 IAM Permissions Required
-
-**NAT instance role** (least privilege, scoped where practical to this
-instance/these resources):
+**NAT instance role** (least privilege, scoped where practical):
 
 - `ec2:AssociateAddress`, `ec2:DisassociateAddress`
-- `ec2:ModifyInstanceAttribute` — self-disables `source_dest_check` at
-  boot (T11): `aws_launch_template` has no argument for this at all
-  (confirmed via `terraform providers schema`), so it can't be set
-  declaratively.
+- `ec2:ModifyInstanceAttribute` — disable `source_dest_check` at boot
 - `ec2:CreateRoute`, `ec2:ReplaceRoute`, `ec2:DescribeRouteTables` —
-  `CreateRoute` covers first-ever launch into a route table with no
-  pre-existing default route; `ReplaceRoute` alone rejects that case
-  with `InvalidParameterValue` (found live during a real migration
-  cutover from a predecessor setup with no seeded default route).
+  `CreateRoute` covers first launch into a route table with no existing
+  default route (`ReplaceRoute` alone returns `InvalidParameterValue`)
 - `ssmmessages:*`, `ec2messages:*`, `ssm:UpdateInstanceInformation`
-  (SSM Session Manager access)
 
-No `ec2:DescribeInstances` grant: the bootstrap script resolves its own
-instance ID and region entirely via IMDSv2 (`/latest/meta-data/...`),
-never the EC2 API, so there's no self-lookup call to authorize
-(confirmed while implementing T8, 2026-07-22).
+No `ec2:DescribeInstances`: the bootstrap script resolves instance ID and
+region via IMDSv2 only.
 
-**Failover Lambda role** (proactive Spot interruption):
+**Failover Lambda role** (Spot interruption):
 
 - `autoscaling:TerminateInstanceInAutoScalingGroup`
 - `autoscaling:DescribeAutoScalingGroups`
-- `sns:Publish`, scoped to `var.sns_topic_arn` — **only granted when
-  `sns_topic_arn` is set** (T24); publishes a Spot-failover
-  notification after a real termination.
+- `sns:Publish` on `var.sns_topic_arn` — only when `sns_topic_arn` is set
 - `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 
 **Spot fallback Lambda role:**
 
-- `autoscaling:UpdateAutoScalingGroup` (scoped to this ASG's ARN)
+- `autoscaling:UpdateAutoScalingGroup` (scoped to this ASG)
 - `autoscaling:DescribeAutoScalingGroups`
 - `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 
-**No IAM role of this module's own** is needed for reactive-failover
-ASG notifications or the CloudWatch alarm → SNS publish actions
-(T25/T26) — both are AWS-native service integrations authorized via
-the SNS topic's own resource policy, not a caller-side IAM grant.
+Reactive ASG notifications and CloudWatch alarm → SNS publishes need no
+module IAM role — they are AWS service integrations authorized via the
+SNS topic resource policy.
 
 ## 8. Deployment Assumptions
 
-- Single AWS account, single region per module instantiation. Multi-env
-  and multi-region are handled by Terragrunt calling this module
-  repeatedly with different backend/provider configuration — not by the
-  module itself.
-- Existing VPC, existing public subnet, and existing private route
-  tables are provided by the caller; the module never creates network
-  topology.
-- Terraform and provider version constraints live in `versions.tf`; see
-  [README.md's Requirements table](../README.md#requirements) for current
-  pins — not repeated here to avoid the two copies drifting out of sync.
-- No key pair distribution — operators use SSM Session Manager
-  (`aws ssm start-session`) for any interactive access.
+- Single account and region per module call. Multi-env / multi-region is
+  Terragrunt's job.
+- Caller provides existing VPC, public subnet, and private route tables.
+- Version pins live in `versions.tf` — see
+  [README Requirements](../README.md#requirements).
+- Operator access via SSM Session Manager (`aws ssm start-session`).
 
 ## 9. Edge Cases
 
-- **Spot capacity unavailable:** AWS Mixed Instances Policy does **not**
-  fall back to On-Demand automatically — the ASG retries Spot pools
-  only. **Implemented (T21):** explicit safety net under Spot exhaustion fallback. Widening
-  `instance_types` and ASG capacity rebalancing reduce but do not
-  eliminate this risk.
-- **Spot interruption warning fires:** handled by proactive failover.
-- **Instance fails EC2 status checks (non-Spot cause):** handled by
-  reactive failover.
-- **Both EIP association and route replacement must succeed for the
-  instance to be considered "in service."** If either API call fails at
-  boot (e.g. transient IAM/eventual-consistency issue), the bootstrap
-  script should retry with backoff before giving up — a NAT instance
-  that boots but never gets the EIP or route table pointed at it is
-  silently useless.
-- **Multiple private subnets per AZ:** supported by design — all IDs in
-  `private_route_table_ids` are updated on every replacement.
+- **Spot capacity unavailable:** Mixed Instances Policy does not fall
+  back to On-Demand by itself. The Spot exhaustion fallback is the
+  safety net; widening `instance_types` and capacity rebalancing reduce
+  but do not eliminate the risk.
+- **Spot interruption warning:** proactive failover.
+- **Non-Spot EC2 status-check failure:** reactive failover.
+- **EIP association and route replacement must both succeed** for the
+  instance to be useful. Bootstrap should retry with backoff; a NAT that
+  boots without EIP or routes is silently useless.
+- **Multiple private subnets per AZ:** supported — every ID in
+  `private_route_table_ids` is updated on each replacement.
 
-## 10. Assumptions Requiring Confirmation
+## 10. EIP ownership and destroy behavior
 
-These two points were not explicitly settled in the requirements
-interview. Sensible defaults are specified below; flag if you want
-different behavior:
-
-1. **EIP ownership:** default is the module allocates its own EIP
-   (`eip_allocation_id = null`). Bring-your-own is supported as an
-   escape hatch but is not the default path.
-2. **EIP lifecycle on destroy:** default is `release_eip_on_destroy =
-   true` — a normal `terraform destroy` releases the EIP. **The
-   variable itself is documentation-only and has no Terraform-enforced
-   effect**: `lifecycle` meta-arguments (the only mechanism that could
-   gate `aws_eip.nat`'s destruction) accept only static literal values,
-   never a variable reference, so no resource anywhere in this module
-   reads `var.release_eip_on_destroy` — setting it to `false` alone
-   changes nothing about what `terraform destroy` does. If you want the
-   IP to survive a destroy/recreate cycle (e.g. it's allowlisted in a
-   downstream firewall), the only actual mechanism is manual: run
+1. **Ownership:** default is module-allocated EIP
+   (`eip_allocation_id = null`). Bring-your-own is supported.
+2. **Destroy:** `release_eip_on_destroy` defaults to `true` but is
+   **documentation-only** — Terraform `lifecycle` cannot reference
+   variables, so no resource reads it; `terraform destroy` always
+   releases a module-allocated EIP. To keep the IP across destroy
+   (e.g. allowlisted downstream), run
    `terraform state rm '<module address>.aws_eip.nat[0]'` *before*
-   destroying. The EIP then becomes unmanaged Terraform state — still a
-   real, billed AWS resource — and must be reimported or released
-   manually afterward.
+   destroy. The EIP then becomes unmanaged and must be reimported or
+   released manually. An orphaned EIP still bills (~$3.60/mo).
 
-## 11. Testing Strategy (Partially Deferred)
+## 11. Testing
 
-Per explicit instruction, `bats` (bootstrap script logic) and
-`terraform test` (module logic) are **not** being built in this
-phase — deliberately deferred as backlog. The Lambda side is **not**
-deferred: `tests/test_lambda_failover.py` and
-`tests/test_lambda_spot_fallback.py` are real, committed suites
-(stdlib `unittest`, `boto3`/`botocore` stubbed via `sys.modules` so no
-dependency is added — Lambda's own runtime bundles `boto3`), covering
-both Lambdas' pure logic and full `handler()` flows via
-`unittest.mock.patch.object`. Run with:
+Committed Lambda suites (stdlib `unittest`; `boto3`/`botocore` stubbed
+via `sys.modules` so no extra dependency):
 
 ```bash
 python3 -m unittest tests.test_lambda_failover tests.test_lambda_spot_fallback
 ```
 
-Still deferred, intended approach when resumed:
+Deferred:
 
-- Bootstrap/failover shell logic → **bats**, run against a mocked `aws`
-  CLI, asserting the correct `ec2:AssociateAddress` /
-  `ec2:ReplaceRoute` calls are constructed.
-- Terraform module → native `terraform test` with a mocked provider,
-  validating variable validation rules, conditional Spot/On-Demand
-  wiring, and output correctness.
+- Bootstrap shell → bats against a mocked `aws` CLI
+- Module → `terraform test` with a mocked provider (validation rules,
+  Spot/On-Demand wiring, outputs)
 
 ## 12. Repository Layout
 
-Small files, explicit interfaces, clean separation by concern:
-
 ```text
 aws-nat-ec2/
-├── versions.tf                   # terraform + provider version constraints
-├── variables.tf                  # module inputs (table in README.md; this section just points there)
-├── outputs.tf                    # module outputs (table in README.md; this section just points there)
+├── versions.tf
+├── variables.tf                  # inputs (table in README)
+├── outputs.tf                    # outputs (table in README)
 ├── network.tf                    # security group, subnet/AZ data sources
-├── compute.tf                    # launch template, ASG, mixed instances policy
-├── eip.tf                        # EIP resource (conditional on eip_allocation_id)
-├── iam.tf                        # instance role, instance profile, policies
-├── failover.tf                   # EventBridge rule, proactive-failover Lambda, Lambda IAM role
-├── spot_fallback.tf              # Spot-exhaustion alarm, fallback Lambda, Lambda IAM role
-├── observability.tf              # SNS notifications, Lambda backstop alarms, log group retention
+├── compute.tf                    # launch template, ASG, mixed instances
+├── eip.tf
+├── iam.tf
+├── failover.tf                   # EventBridge + proactive-failover Lambda
+├── spot_fallback.tf              # Spot-exhaustion alarm + fallback Lambda
+├── observability.tf              # SNS notifications, backstop alarms, logs
 ├── scripts/
-│   ├── bootstrap.sh.tpl           # user-data template (NAT setup, EIP, routes)
-│   ├── lambda_failover.py         # proactive failover Lambda source
-│   └── lambda_spot_fallback.py    # Spot-exhaustion fallback Lambda source
+│   ├── bootstrap.sh.tpl
+│   ├── lambda_failover.py
+│   └── lambda_spot_fallback.py
 ├── tests/
-│   ├── test_lambda_failover.py       # unit tests (stdlib unittest, mocked boto3)
-│   └── test_lambda_spot_fallback.py  # unit tests (stdlib unittest, mocked boto3)
-├── examples/basic/                # throwaway verification fixture -- not part of the module itself
+│   ├── test_lambda_failover.py
+│   └── test_lambda_spot_fallback.py
+├── examples/basic/               # verification fixture (not the module)
 ├── README.md
 └── docs/
-    ├── SPEC.md                   # this document
-    ├── architecture.png          # architecture diagram, embedded in README
-    └── architecture.drawio       # editable diagram source (open at diagrams.net)
+    ├── SPEC.md
+    ├── architecture.png
+    └── architecture.drawio
 ```
 
-## 13. Verification Plan (Runnable)
+## 13. Verification Plan
 
-Manual, CLI-driven verification against a real (or disposable sandbox)
-AWS account. No automated test harness in this phase (see Testing Strategy) — every
-step below is a copy-pasteable command.
+Manual CLI checks against a real or sandbox AWS account.
 
-**Prerequisites:** an existing VPC with one public subnet and at least
-one private subnet + route table in the target AZ; a test EC2 instance
-in the private subnet (no public IP) to act as the client whose egress
-traffic transits the NAT instance; AWS CLI configured with sufficient
-permissions.
+**Prerequisites:** VPC with one public subnet and at least one private
+subnet + route table in the target AZ; a private test EC2 instance (no
+public IP); AWS CLI with sufficient permissions.
 
-**Caveat confirmed against the real dev environment this module
-replaces (2026-07-09, see the legacy module's `ssm_issue.md`):** if the
-VPC has no interface endpoints for `ssm`/`ec2messages`/`ssmmessages`,
-every private instance's Session Manager control/data channel — not
-just its internet egress — routes through the NAT instance too. A
-*new* `aws ssm start-session` attempt during the replacement window in
-steps 7-10 below can fail with `TargetNotConnected` even once the new
-NAT instance is otherwise healthy, which would look like a module bug
-but isn't one — it's this pre-existing VPC-level gap.
-`describe-instance-information`'s `PingStatus: Online` is a lagging
-heartbeat, not reliable evidence the data channel is actually up.
-Prefer keeping the session opened in step 6 open across steps 7-10
-rather than starting a fresh one, and don't treat a fresh-session
-failure alone as a failed verification without also checking whether
-this VPC-endpoint gap exists.
+**SSM caveat:** if the VPC has no interface endpoints for
+`ssm` / `ec2messages` / `ssmmessages`, Session Manager for private
+instances also routes through the NAT. A *new*
+`aws ssm start-session` during replacement (steps 7–10) can fail with
+`TargetNotConnected` even when the new NAT is healthy — that is a
+VPC-level gap, not a module bug. Prefer keeping the step-6 session open
+across the replacement window.
+`describe-instance-information` `PingStatus: Online` is a lagging
+heartbeat and is not reliable proof the data channel is up.
 
-Adding the three interface endpoints is the real fix, but it is not
-free and cuts against this whole project's cost motivation: interface
-endpoints bill per AZ per endpoint (roughly $0.01/hr each, ~$7-8/mo)
-plus per-GB data processing — three endpoints across two AZs is on the
-order of $45-50+/mo, comparable to or more than the NAT instance
-savings this module is chasing. Treat it as a deliberate tradeoff for
-the person to weigh (blast-radius/observability during NAT replacement
-vs. added fixed cost), not an automatic "just add it" — this module
-doesn't own that decision or the resources (see Non-Goals), it only
-needs to document the dependency.
+Adding those three interface endpoints fixes SSM independence but costs
+roughly $45–50+/mo for 3 endpoints across 2 AZs — often comparable to
+the NAT savings. That tradeoff is outside this module's scope.
 
 ```bash
-# 1. Deploy the module (via your Terragrunt live config, or a throwaway root module)
+# 1. Deploy
 terragrunt apply
 
 # 2. Capture outputs
@@ -483,7 +348,7 @@ NAT_ASG=$(terragrunt output -raw nat_instance_asg_name)
 NAT_EIP=$(terragrunt output -raw eip_public_ip)
 echo "ASG: $NAT_ASG   EIP: $NAT_EIP"
 
-# 3. Confirm exactly one instance is running and healthy
+# 3. Confirm one healthy instance
 aws autoscaling describe-auto-scaling-groups \
   --auto-scaling-group-names "$NAT_ASG" \
   --query 'AutoScalingGroups[0].Instances[*].[InstanceId,HealthStatus,LifecycleState]' \
@@ -493,38 +358,37 @@ NAT_INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
   --auto-scaling-group-names "$NAT_ASG" \
   --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text)
 
-# 4. Confirm the EIP is associated with the current instance
+# 4. EIP associated with current instance
 aws ec2 describe-addresses --public-ips "$NAT_EIP" \
   --query 'Addresses[0].InstanceId' --output text
 # Expect: matches $NAT_INSTANCE_ID
 
-# 5. Confirm the private route table(s) point at the current instance
+# 5. Private route table(s) point at current instance
 aws ec2 describe-route-tables --route-table-ids <PRIVATE_RT_ID> \
   --query 'RouteTables[0].Routes[?DestinationCidrBlock==`0.0.0.0/0`]' --output table
 # Expect: InstanceId matches $NAT_INSTANCE_ID
 
-# 6. From the private test instance (via SSM, not SSH), verify egress works
+# 6. From private test instance via SSM, verify egress
 aws ssm start-session --target <PRIVATE_TEST_INSTANCE_ID>
 #   (inside the session:)
 curl -s https://checkip.amazonaws.com
 #   Expect: returns $NAT_EIP
 
-# 7. Simulate instance failure — force-terminate the current NAT instance
+# 7. Force-terminate current NAT instance
 aws ec2 terminate-instances --instance-ids "$NAT_INSTANCE_ID"
 
-# 8. Poll until the ASG reports a new, different, healthy instance
+# 8. Poll until ASG has a new healthy instance
 watch -n 5 'aws autoscaling describe-auto-scaling-groups \
   --auto-scaling-group-names '"$NAT_ASG"' \
   --query "AutoScalingGroups[0].Instances[*].[InstanceId,HealthStatus,LifecycleState]" \
   --output table'
-# Expect: a new InstanceId appears, reaches HealthStatus=Healthy,
-# LifecycleState=InService, typically within ~1-2 minutes.
+# Expect: new InstanceId, HealthStatus=Healthy, LifecycleState=InService (~1–2 min)
 
 NEW_INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
   --auto-scaling-group-names "$NAT_ASG" \
   --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text)
 
-# 9. Re-check EIP association and route table now point at the NEW instance
+# 9. EIP and route table point at NEW instance
 aws ec2 describe-addresses --public-ips "$NAT_EIP" \
   --query 'Addresses[0].InstanceId' --output text
 # Expect: matches $NEW_INSTANCE_ID
@@ -533,79 +397,54 @@ aws ec2 describe-route-tables --route-table-ids <PRIVATE_RT_ID> \
   --query 'RouteTables[0].Routes[?DestinationCidrBlock==`0.0.0.0/0`]' --output table
 # Expect: InstanceId matches $NEW_INSTANCE_ID
 
-# 10. Re-verify egress from the private test instance still works, with the same public IP
+# 10. Re-verify egress — same public IP
 aws ssm start-session --target <PRIVATE_TEST_INSTANCE_ID>
 curl -s https://checkip.amazonaws.com
 # Expect: still returns $NAT_EIP
 
-# 11. (Spot only) Verify proactive failover wiring exists, without waiting for a real interruption
+# 11. (Spot only) Confirm proactive failover wiring
 aws events list-rules --query "Rules[?contains(Name,'spot-interruption')]" --output table
 aws lambda get-function --function-name <failover_lambda_arn_from_output>
-# Optionally, hand-craft and put a synthetic "EC2 Spot Instance Interruption Warning"
-# event via `aws events put-events` targeting the current NAT instance ID, then repeat
-# steps 8-10 and confirm replacement begins before natural termination would occur.
+# Optional: put a synthetic Spot interruption warning via
+# `aws events put-events`, then repeat steps 8–10.
 
 # 12. Teardown
 terragrunt destroy
-# If release_eip_on_destroy = true (default), confirm the EIP no longer appears:
 aws ec2 describe-addresses --public-ips "$NAT_EIP"
-# Expect: an error (address not found) — confirms clean release.
+# Expect: address not found (module-allocated EIP released)
 ```
 
-**Pass criteria:** steps 4, 5, 6, 9, 10 all resolve to the expected
-value/output on both the original and the replacement instance, and the
-gap between step 7 (termination) and step 10 succeeding again is
-consistent with the downtime expectations under reactive and proactive failover.
+**Pass criteria:** steps 4, 5, 6, 9, and 10 match expectations on both
+the original and replacement instance, and the gap from step 7 to step
+10 recovering is consistent with reactive/proactive failover downtime.
 
 ## 14. Cost Estimate (informational)
 
-Not a design constraint — recorded so the Overview's "materially cheaper" claim
-is backed by real numbers instead of assumed. Figures pulled 2026-07-09
-for `eu-west-1`; AWS pricing changes over time and Spot prices fluctuate
-continuously — treat as directional, not exact.
+Directional figures for `eu-west-1` (pulled 2026-07-09). Spot and AWS
+pricing change; treat as order-of-magnitude.
 
 **Per NAT instance (per AZ), monthly:**
 
 | Item | Cost | Notes |
 |---|---|---|
-| EC2 compute, Spot (`t4g.nano`/`t3.nano`/`t3a.nano`) | ~$0.50-2/mo | Spot discount vs. on-demand is typically 60-90% but highly variable; not a stable number. |
-| EC2 compute, On-Demand fallback | ~$3.35-4.16/mo | `t4g.nano` ≈ $0.0046/hr; `t3.nano` ≈ $0.0057/hr. Only paid when Spot capacity is unavailable. |
-| EBS root volume (gp3, 8GB default) | ~$0.75-0.80/mo | Negligible; scales with `root_volume_size`. Always encrypted (hardcoded, not a variable); `root_volume_kms_key_id` optionally sets a customer-managed key instead of the account's default `aws/ebs` key, at no extra AWS charge for the encryption itself. |
-| **Elastic IP (persistent)** | **$3.60/mo flat** | **Important, not in the original SPEC interview:** since Feb 2024, AWS charges $0.005/hr for *every* public IPv4 address, attached or not — this is no longer the pre-2024 "free while attached to a running instance" model. This EIP cost is now often **larger than the Spot compute cost itself**, and it is *not* optional/skippable for the module's core persistent-IP goal. |
-| Failover Lambda | ~$0/mo | Comfortably inside the *permanent* free tier (1M requests + 400,000 GB-s/mo) — Spot interruptions are rare events, nowhere close to that volume. |
-| Spot fallback Lambda + alarm | ~$0/mo | Same negligible volume as failover Lambda; alarm on a single ASG metric. |
-| EventBridge rule | ~$0/mo | Negligible event volume for this pattern. |
-| CloudWatch Logs (Lambda) | ~$0/mo (cents) | Tiny log volume. |
-| ASG, Launch Template, Security Group, IAM role/profile/policy | $0/mo | No direct AWS charge for these resource types. |
+| EC2 Spot (`t4g.nano` / `t3.nano` / `t3a.nano`) | ~$0.50–2/mo | Spot discount typically 60–90%, highly variable. |
+| EC2 On-Demand fallback | ~$3.35–4.16/mo | `t4g.nano` ≈ $0.0046/hr; `t3.nano` ≈ $0.0057/hr. Only when Spot is unavailable. |
+| EBS root (gp3, 8 GB) | ~$0.75–0.80/mo | Always encrypted; optional CMK via `root_volume_kms_key_id` (no extra encryption charge). |
+| **Elastic IP** | **$3.60/mo flat** | Since Feb 2024, $0.005/hr for every public IPv4. Often larger than Spot compute; required for persistent-IP. |
+| Failover / fallback Lambdas, EventBridge, CW Logs | ~$0/mo | Negligible volume; well inside free tier. |
+| ASG, Launch Template, SG, IAM | $0/mo | No direct charge. |
 
-**Estimated all-in, per AZ:** roughly **$5.50-6.50/mo on Spot**, or
-**~$7.75/mo** if permanently running On-Demand — vs. **Managed NAT
-Gateway's ~$35.04/mo base** (`$0.048/hr` in `eu-west-1`) **before any
-data processing**. For 2 AZs (`eu-west-1a`+`eu-west-1b`), roughly
-double both sides.
+**All-in per AZ:** roughly **$5.50–6.50/mo on Spot**, or **~$7.75/mo**
+On-Demand — vs Managed NAT Gateway **~$35.04/mo** base (`$0.048/hr`)
+before data processing. Two AZs roughly double both sides.
 
-**The bigger structural saving is per-GB, not the hourly rate.**
-Managed NAT Gateway charges `$0.048/GB` **on top of** standard AWS data
-transfer rates (`$0.09/GB` to the internet in `eu-west-1`, after the
-account-wide 100GB/mo free tier) for every byte it processes. This
-module's NAT instance adds **no equivalent per-GB surcharge** — only
-the same standard EC2 data-transfer-out charge that both approaches pay
-identically. At meaningful traffic volumes this dominates the
-comparison: e.g. 10TB/mo through a NAT Gateway costs an *extra*
-~$480/mo in processing fees alone that this module's approach doesn't
-incur.
+**Per-GB dominates at scale.** Managed NAT adds `$0.048/GB` on top of
+standard data transfer (`$0.09/GB` to internet in `eu-west-1` after the
+account free tier). This module adds no equivalent processing surcharge
+— only the same EC2 data-transfer-out charge. Example: 10 TB/mo through
+a NAT Gateway is an *extra* ~$480/mo in processing fees this approach
+avoids.
 
-**Operational consequence of the manual `terraform state rm` escape
-hatch under Assumptions Requiring Confirmation (T6):** an intentionally-orphaned EIP is not free to leave
-sitting around — under the current pricing model it keeps costing
-$3.60/mo indefinitely until it's manually released, unlike the old
-"idle EIPs cost, attached EIPs are free" assumption that may have
-informed the original default.
-
-**Not counted here, and deliberately out of this module's cost
-scope** (see Non-Goals — VPC-level resources, not owned by this module):
-VPC interface endpoints for SSM/EC2Messages/SSMMessages, if added per
-the verification caveat above, add roughly **$45-50+/mo** for 3 endpoints across
-2 AZs (~$0.01/hr per endpoint per AZ + data processing) — a real,
-separate tradeoff for the person to weigh against this module's own
-savings, not a cost this module itself introduces.
+**Out of module scope:** SSM interface endpoints (~$45–50+/mo for 3
+endpoints across 2 AZs) if added for Session Manager independence during
+NAT replacement — see the verification SSM caveat.
