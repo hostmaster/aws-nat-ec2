@@ -49,7 +49,12 @@ Spot. This module replaces older Amazon Linux–based NAT instance tooling.
 One NAT instance per AZ. Each module call provisions one Auto Scaling
 Group (`min=max=desired=1`) in one public subnet, serving N private
 subnets via N route table updates in that AZ. Terragrunt invokes the
-module once per AZ that needs egress.
+module once per AZ that needs egress. **Each call must use a unique
+`name_prefix`** (e.g. `app-dev-a` / `app-dev-b`): Lambda function,
+CloudWatch Log Group, and CloudWatch alarm names are derived directly
+from it with no Terraform random suffix (unlike the ASG / IAM role /
+EventBridge rule). Reusing a prefix across calls collides on those
+resources.
 
 ```text
                  ┌────────────────────────────┐
@@ -155,14 +160,24 @@ Mechanism (when `spot_on_demand_fallback = true`):
    in `compute.tf` (opt-in per AWS).
 2. A fallback Lambda (`scripts/lambda_spot_fallback.py`) calls
    `UpdateAutoScalingGroup` to set
-   `OnDemandPercentageAboveBaseCapacity = 100`. It skips the flip while
-   instances are still `Pending` (avoids false positives during proactive
-   failover).
+   `OnDemandPercentageAboveBaseCapacity = 100`. It **does flip while
+   instances are still `Pending`**. CloudWatch alarm actions fire only on
+   a state *transition*, not on every evaluation while the alarm stays
+   `ALARM`. Deferring for Pending would rely on a second invoke that may
+   never come if that launch later fails while the alarm remains
+   `ALARM`, stranding an empty ASG. Flipping the distribution mid-flight
+   is harmless — it only changes the *next* launch attempt, not the one
+   already underway. See `should_flip_to_on_demand` and
+   `tests/test_lambda_spot_fallback.py`.
 3. The new instance runs the same EIP + route bootstrap.
 
 This is separate from Spot *interruption* failover and from setting
-`use_spot = false`. Revert to Spot after exhaustion is
-operator/Terraform-driven; automatic revert is out of scope.
+`use_spot = false`. After a live flip, Terraform state still shows
+Spot-only until the operator applies a config change. **Day-2 runbook
+(see README):** set `use_spot = false` and apply to persist On-Demand;
+do **not** blind-apply with `use_spot = true` (that resets Spot and can
+recreate the outage). Revert to Spot later is deliberate and
+operator-driven; automatic revert is out of scope.
 
 **Why an alarm instead of EventBridge `EC2 Instance Launch Unsuccessful`:**
 that event fires per failed launch attempt across every Spot pool retry,
@@ -242,9 +257,16 @@ SNS topic resource policy.
 - Single account and region per module call. Multi-env / multi-region is
   Terragrunt's job.
 - Caller provides existing VPC, public subnet, and private route tables.
+- **`name_prefix` is unique per module call** (typically one suffix per
+  AZ). This is a hard consumer contract — see Topology above and the
+  README Usage example.
 - Version pins live in `versions.tf` — see
   [README Requirements](../README.md#requirements).
 - Operator access via SSM Session Manager (`aws ssm start-session`).
+- After Spot-exhaustion fallback flips the live ASG to On-Demand,
+  operators follow the README **Day-2 ops** runbook before the next
+  apply (persist with `use_spot = false`, or accept a deliberate Spot
+  reset).
 
 ## 9. Edge Cases
 

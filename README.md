@@ -58,7 +58,9 @@ dependency "subnets" {
 }
 
 inputs = {
-  name_prefix             = "myapp-dev"
+  # Unique per module call / AZ — Lambda, log group, and alarm names
+  # use this value directly (no Terraform random suffix).
+  name_prefix             = "myapp-dev-a"
   vpc_id                  = dependency.vpc.outputs.vpc_id
   public_subnet_id        = dependency.subnets.outputs.public_subnet_ids[0]
   private_route_table_ids = [dependency.subnets.outputs.private_route_table_ids[0]]
@@ -72,9 +74,9 @@ inputs = {
 ```
 
 For a second AZ, add another Terragrunt unit with that AZ's subnet /
-route tables and a **distinct `name_prefix`**. Lambda, log group, and
-alarm names are derived from `name_prefix` with no extra uniqueness, so
-shared prefixes collide.
+route tables and a **distinct `name_prefix`** (e.g. `myapp-dev-b`).
+Lambda, log group, and alarm names are derived from `name_prefix` with
+no extra uniqueness, so shared prefixes collide.
 
 ## Inputs
 
@@ -117,10 +119,30 @@ Required: `name_prefix`, `vpc_id`, `public_subnet_id`,
 | `spot_fallback_lambda_arn` | Spot-exhaustion fallback Lambda ARN (`null` when disabled). |
 | `spot_fallback_alarm_arn` | Spot-exhaustion CloudWatch alarm ARN (`null` when disabled). |
 
-**Note:** if the fallback Lambda flips the live ASG to On-Demand at
-runtime, Terraform state still shows Spot-only until you apply a config
-change. To persist On-Demand, set `use_spot = false` and apply. A blind
-`terraform apply` with `use_spot = true` resets the ASG to Spot-only.
+## Day-2 ops: after Spot-exhaustion fallback
+
+When Spot capacity is exhausted, the fallback Lambda flips the **live**
+ASG Mixed Instances Policy to 100% On-Demand. Terraform state and config
+still say Spot (`use_spot = true`) until you change them.
+
+**Do this next (deliberate apply):**
+
+1. Confirm egress recovered (private instance can reach the internet;
+   ASG has an InService instance).
+2. Set `use_spot = false` in the Terragrunt/module inputs and apply.
+   That aligns config with the live On-Demand policy so a later apply
+   does not fight the Lambda.
+3. Optionally turn off `spot_on_demand_fallback` while staying On-Demand
+   (it is ignored when `use_spot = false`, but keeping inputs honest
+   avoids confusion).
+
+**Do not** run a blind `terraform apply` / `terragrunt apply` while
+`use_spot = true` after a fallback. That resets the ASG to Spot-only and
+can recreate the same outage if Spot is still exhausted.
+
+**Returning to Spot later:** only when Spot capacity has recovered —
+set `use_spot = true` (and re-enable fallback if desired) and apply as a
+planned change, not as an incidental config sync.
 
 ## Inspiration
 
