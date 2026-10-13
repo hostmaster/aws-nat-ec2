@@ -23,7 +23,7 @@ and needs replacing.
 - Support both On-Demand and Spot capacity. When `use_spot = true`, prefer
   Spot via the Mixed Instances Policy; when Spot capacity is unavailable
   across every configured pool in the AZ, fall back to On-Demand via an
-  explicit safety net (CloudWatch alarm + Lambda policy flip — see §5.4).
+  explicit safety net (CloudWatch alarm + Lambda policy flip; details under Spot exhaustion fallback below).
   A static `use_spot = false` toggle remains available
   for callers who want 100% On-Demand without the fallback machinery.
 - Support both x86_64 and arm64 (Graviton) architectures.
@@ -56,7 +56,7 @@ and needs replacing.
   repository, not this one.)
 - No multi-region or multi-account support inside the module (single
   account, single region; Terragrunt handles repetition across envs).
-- No automated test suite in this phase (explicitly deferred — see §11).
+- No automated test suite in this phase (explicitly deferred — see Testing Strategy below).
 - No custom NAT-functionality health check (relies on standard EC2 status
   checks only, not an application-level "is NAT actually forwarding
   traffic" probe).
@@ -92,10 +92,10 @@ and needs replacing.
 - **Auto Scaling Group** — `min=max=desired=1`, single public subnet,
   EC2 status check health check, Mixed Instances Policy (Spot when
   `use_spot = true`, 100% On-Demand when `use_spot = false`). Spot
-  exhaustion fallback per §5.4 when `spot_on_demand_fallback = true`
+  exhaustion fallback (below) when `spot_on_demand_fallback = true`
   (the default).
-- **Elastic IP** — allocated by the module by default (see §10 for the
-  bring-your-own alternative), reassociated to the current instance by
+- **Elastic IP** — allocated by the module by default (bring-your-own alternative under
+  Assumptions Requiring Confirmation), reassociated to the current instance by
   the boot script.
 - **Security Group** — egress-open; ingress defaults to allowing all
   traffic from the VPC's own CIDR block(s) (looked up via the `vpc_id`
@@ -111,12 +111,11 @@ and needs replacing.
   associate its own EIP, replace routes in the configured route tables,
   and use SSM Session Manager.
 - **EventBridge Rule + Lambda + Lambda IAM Role** — proactive failover on
-  Spot interruption warning (see §5.2).
+  Spot interruption warning (details under Proactive failover below).
 - **CloudWatch Alarm + Fallback Lambda + Lambda IAM Role** — Spot
-  exhaustion fallback to On-Demand (see §5.4). Omitted when `use_spot =
+  exhaustion fallback to On-Demand (details below). Omitted when `use_spot =
   false` or `spot_on_demand_fallback = false`.
-- **SNS notifications + backstop alarms** (all opt-in, BYO topic only —
-  see §7.1) — reactive/proactive failover notifications, Lambda
+- **SNS notifications + backstop alarms** (all opt-in, BYO topic only) — reactive/proactive failover notifications, Lambda
   `Errors`/`Throttles` alarms, and an independent signal on the Spot-
   exhaustion alarm. Nothing here changes NAT behavior; it's purely
   observability. Omitted entirely when `sns_topic_arn = null`.
@@ -147,7 +146,7 @@ and needs replacing.
 ### 5.1 Reactive failover (default ASG behavior)
 
 If the NAT instance fails EC2 status checks (or is terminated for any
-reason not caught by §5.2), the ASG launches a replacement instance per
+reason not caught by proactive failover above), the ASG launches a replacement instance per
 its standard behavior. On boot, the new instance's bootstrap script:
 
 1. Re-associates the persistent EIP to itself.
@@ -172,11 +171,11 @@ To shrink the downtime window further when running on Spot:
    two-minute Spot warning window — the replacement is typically already
    booting (or up) before the interrupted instance is reclaimed.
 4. The new instance's bootstrap script performs the same EIP + route
-   table steps as in §5.1.
+   table steps as in reactive failover above.
 
 This is a best-effort shrink of the downtime window, not a guarantee of
-zero packet loss — there is no warm standby in this design (by choice,
-per §3).
+zero packet loss — there is no warm standby in this design (by choice;
+see Non-Goals).
 
 ### 5.3 Persistent EIP
 
@@ -184,8 +183,8 @@ per §3).
   never released by ordinary instance replacement.
 - "Persistent" here means: the public IP a private-subnet resource
   appears to originate from stays the same across NAT instance
-  replacements — not that the IP survives module deletion (see §10 for
-  the destroy-behavior default).
+  replacements — not that the IP survives module deletion (see destroy-behavior
+  default under Assumptions Requiring Confirmation).
 - Reassociation is performed by the instance itself at boot time via
   `ec2:AssociateAddress`, using its own IAM instance-profile permissions.
   No Lambda or external orchestrator is involved in this step.
@@ -209,11 +208,11 @@ private subnets without egress until Spot capacity returns.
    `UpdateAutoScalingGroup` to set `OnDemandPercentageAboveBaseCapacity =
    100`, forcing the next launch as On-Demand. It skips the flip while
    instances are still `Pending`, to avoid false positives during normal
-   proactive failover (§5.2).
+   proactive failover.
 3. The new instance's bootstrap script performs the same EIP + route
-   table steps as in §5.1.
+   table steps as in reactive failover above.
 
-This is distinct from §5.2 (Spot *interruption*) and from toggling
+This is distinct from proactive failover (Spot *interruption*) and from toggling
 `use_spot = false` (static config change). Revert to Spot after
 exhaustion is **operator/Terraform-driven**; automatic revert is out of
 scope.
@@ -221,7 +220,7 @@ scope.
 **Why a CloudWatch alarm, not an EventBridge launch-failure event:** the
 native alternative is EventBridge's `EC2 Instance Launch Unsuccessful`
 (source `aws.autoscaling`) — the same style of signal already used for
-`EC2 Spot Instance Interruption Warning` in §5.2. It's rejected here
+`EC2 Spot Instance Interruption Warning` under proactive failover. It's rejected here
 because it fires per failed launch attempt across every Spot pool the
 ASG retries, not once per sustained-exhaustion episode, and AWS re:Post
 confirms these events can be delayed or absent during retries. A
@@ -233,8 +232,8 @@ with `max = 1` the ASG has no headroom to pre-launch a replacement
 before terminating the flagged instance, so it can't get the full
 zero-downtime benefit capacity rebalancing usually provides. It still
 helps because it reacts to the earlier *rebalance recommendation*
-signal, ahead of the 2-minute interruption warning §5.2's Lambda waits
-for.
+signal, ahead of the 2-minute interruption warning that proactive failover's
+Lambda waits for.
 
 ### 5.5 Route table continuity
 
@@ -261,13 +260,12 @@ for.
 
 ### 7.1 Inputs
 
-Full table, with types, defaults, and descriptions: [README.md
-§Inputs](../README.md#inputs) — moved there (2026-07-22) so it's visible on
+Full table, with types, defaults, and descriptions: [README.md Inputs](../README.md#inputs) — moved there (2026-07-22) so it's visible on
 the repo's GitHub front page without opening this file. README.md is the
 source of truth for this table; don't duplicate it back here.
 
 Note on `release_eip_on_destroy`: ignored if `eip_allocation_id` is
-supplied (caller owns lifecycle) — see §10.
+supplied (caller owns lifecycle) — see Assumptions Requiring Confirmation.
 
 Note on `root_volume_kms_key_id`: a customer-managed key needs its own
 key policy changes before instance launches will succeed — see the
@@ -275,9 +273,9 @@ caveat in README.md's Inputs table for the exact statements required.
 
 ### 7.2 Outputs
 
-Full table, with descriptions: [README.md §Outputs](../README.md#outputs)
+Full table, with descriptions: [README.md Outputs](../README.md#outputs)
 — moved there (2026-07-22) for the same GitHub front-page visibility
-reason as §7.1. README.md is the source of truth; don't duplicate it
+reason as the Inputs section. README.md is the source of truth; don't duplicate it
 back here.
 
 ### 7.3 IAM Permissions Required
@@ -303,7 +301,7 @@ instance ID and region entirely via IMDSv2 (`/latest/meta-data/...`),
 never the EC2 API, so there's no self-lookup call to authorize
 (confirmed while implementing T8, 2026-07-22).
 
-**Failover Lambda role** (proactive Spot interruption — §5.2):
+**Failover Lambda role** (proactive Spot interruption):
 
 - `autoscaling:TerminateInstanceInAutoScalingGroup`
 - `autoscaling:DescribeAutoScalingGroups`
@@ -312,7 +310,7 @@ never the EC2 API, so there's no self-lookup call to authorize
   notification after a real termination.
 - `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
 
-**Spot fallback Lambda role** (§5.4):
+**Spot fallback Lambda role:**
 
 - `autoscaling:UpdateAutoScalingGroup` (scoped to this ASG's ARN)
 - `autoscaling:DescribeAutoScalingGroups`
@@ -342,12 +340,12 @@ the SNS topic's own resource policy, not a caller-side IAM grant.
 
 - **Spot capacity unavailable:** AWS Mixed Instances Policy does **not**
   fall back to On-Demand automatically — the ASG retries Spot pools
-  only. **Implemented (T21):** explicit safety net (see §5.4). Widening
+  only. **Implemented (T21):** explicit safety net under Spot exhaustion fallback. Widening
   `instance_types` and ASG capacity rebalancing reduce but do not
   eliminate this risk.
-- **Spot interruption warning fires:** handled proactively per §5.2.
-- **Instance fails EC2 status checks (non-Spot cause):** handled
-  reactively per §5.1.
+- **Spot interruption warning fires:** handled by proactive failover.
+- **Instance fails EC2 status checks (non-Spot cause):** handled by
+  reactive failover.
 - **Both EIP association and route replacement must succeed for the
   instance to be considered "in service."** If either API call fails at
   boot (e.g. transient IAM/eventual-consistency issue), the bootstrap
@@ -413,15 +411,15 @@ Small files, explicit interfaces, clean separation by concern:
 ```text
 aws-nat-ec2/
 ├── versions.tf                   # terraform + provider version constraints
-├── variables.tf                  # module inputs (table in README.md, §7.1 here just points there)
-├── outputs.tf                    # module outputs (table in README.md, §7.2 here just points there)
+├── variables.tf                  # module inputs (table in README.md; this section just points there)
+├── outputs.tf                    # module outputs (table in README.md; this section just points there)
 ├── network.tf                    # security group, subnet/AZ data sources
 ├── compute.tf                    # launch template, ASG, mixed instances policy
 ├── eip.tf                        # EIP resource (conditional on eip_allocation_id)
 ├── iam.tf                        # instance role, instance profile, policies
-├── failover.tf                   # EventBridge rule, proactive-failover Lambda, Lambda IAM role (§5.2)
-├── spot_fallback.tf              # Spot-exhaustion alarm, fallback Lambda, Lambda IAM role (§5.4)
-├── observability.tf              # SNS notifications, Lambda backstop alarms, log group retention (§4.2)
+├── failover.tf                   # EventBridge rule, proactive-failover Lambda, Lambda IAM role
+├── spot_fallback.tf              # Spot-exhaustion alarm, fallback Lambda, Lambda IAM role
+├── observability.tf              # SNS notifications, Lambda backstop alarms, log group retention
 ├── scripts/
 │   ├── bootstrap.sh.tpl           # user-data template (NAT setup, EIP, routes)
 │   ├── lambda_failover.py         # proactive failover Lambda source
@@ -429,7 +427,7 @@ aws-nat-ec2/
 ├── tests/
 │   ├── test_lambda_failover.py       # unit tests (stdlib unittest, mocked boto3)
 │   └── test_lambda_spot_fallback.py  # unit tests (stdlib unittest, mocked boto3)
-├── examples/basic/                # throwaway verification fixture (§13) -- not part of the module itself
+├── examples/basic/                # throwaway verification fixture -- not part of the module itself
 ├── README.md
 └── docs/
     ├── SPEC.md                   # this document
@@ -440,7 +438,7 @@ aws-nat-ec2/
 ## 13. Verification Plan (Runnable)
 
 Manual, CLI-driven verification against a real (or disposable sandbox)
-AWS account. No automated test harness in this phase, per §11 — every
+AWS account. No automated test harness in this phase (see Testing Strategy) — every
 step below is a copy-pasteable command.
 
 **Prerequisites:** an existing VPC with one public subnet and at least
@@ -473,7 +471,7 @@ order of $45-50+/mo, comparable to or more than the NAT instance
 savings this module is chasing. Treat it as a deliberate tradeoff for
 the person to weigh (blast-radius/observability during NAT replacement
 vs. added fixed cost), not an automatic "just add it" — this module
-doesn't own that decision or the resources (§3 non-goals), it only
+doesn't own that decision or the resources (see Non-Goals), it only
 needs to document the dependency.
 
 ```bash
@@ -557,11 +555,11 @@ aws ec2 describe-addresses --public-ips "$NAT_EIP"
 **Pass criteria:** steps 4, 5, 6, 9, 10 all resolve to the expected
 value/output on both the original and the replacement instance, and the
 gap between step 7 (termination) and step 10 succeeding again is
-consistent with the downtime expectations in §5.1/§5.2.
+consistent with the downtime expectations under reactive and proactive failover.
 
 ## 14. Cost Estimate (informational)
 
-Not a design constraint — recorded so §1's "materially cheaper" claim
+Not a design constraint — recorded so the Overview's "materially cheaper" claim
 is backed by real numbers instead of assumed. Figures pulled 2026-07-09
 for `eu-west-1`; AWS pricing changes over time and Spot prices fluctuate
 continuously — treat as directional, not exact.
@@ -573,7 +571,7 @@ continuously — treat as directional, not exact.
 | EC2 compute, Spot (`t4g.nano`/`t3.nano`/`t3a.nano`) | ~$0.50-2/mo | Spot discount vs. on-demand is typically 60-90% but highly variable; not a stable number. |
 | EC2 compute, On-Demand fallback | ~$3.35-4.16/mo | `t4g.nano` ≈ $0.0046/hr; `t3.nano` ≈ $0.0057/hr. Only paid when Spot capacity is unavailable. |
 | EBS root volume (gp3, 8GB default) | ~$0.75-0.80/mo | Negligible; scales with `root_volume_size`. Always encrypted (hardcoded, not a variable); `root_volume_kms_key_id` optionally sets a customer-managed key instead of the account's default `aws/ebs` key, at no extra AWS charge for the encryption itself. |
-| **Elastic IP (persistent)** | **$3.60/mo flat** | **Important, not in the original SPEC interview:** since Feb 2024, AWS charges $0.005/hr for *every* public IPv4 address, attached or not — this is no longer the pre-2024 "free while attached to a running instance" model. This EIP cost is now often **larger than the Spot compute cost itself**, and it is *not* optional/skippable for the module's core persistent-IP goal (§2, §5.3). |
+| **Elastic IP (persistent)** | **$3.60/mo flat** | **Important, not in the original SPEC interview:** since Feb 2024, AWS charges $0.005/hr for *every* public IPv4 address, attached or not — this is no longer the pre-2024 "free while attached to a running instance" model. This EIP cost is now often **larger than the Spot compute cost itself**, and it is *not* optional/skippable for the module's core persistent-IP goal. |
 | Failover Lambda | ~$0/mo | Comfortably inside the *permanent* free tier (1M requests + 400,000 GB-s/mo) — Spot interruptions are rare events, nowhere close to that volume. |
 | Spot fallback Lambda + alarm | ~$0/mo | Same negligible volume as failover Lambda; alarm on a single ASG metric. |
 | EventBridge rule | ~$0/mo | Negligible event volume for this pattern. |
@@ -598,16 +596,16 @@ comparison: e.g. 10TB/mo through a NAT Gateway costs an *extra*
 incur.
 
 **Operational consequence of the manual `terraform state rm` escape
-hatch (§10, T6):** an intentionally-orphaned EIP is not free to leave
+hatch under Assumptions Requiring Confirmation (T6):** an intentionally-orphaned EIP is not free to leave
 sitting around — under the current pricing model it keeps costing
 $3.60/mo indefinitely until it's manually released, unlike the old
 "idle EIPs cost, attached EIPs are free" assumption that may have
 informed the original default.
 
 **Not counted here, and deliberately out of this module's cost
-scope** (§3 non-goals — VPC-level resources, not owned by this module):
+scope** (see Non-Goals — VPC-level resources, not owned by this module):
 VPC interface endpoints for SSM/EC2Messages/SSMMessages, if added per
-the §13 caveat above, add roughly **$45-50+/mo** for 3 endpoints across
+the verification caveat above, add roughly **$45-50+/mo** for 3 endpoints across
 2 AZs (~$0.01/hr per endpoint per AZ + data processing) — a real,
 separate tradeoff for the person to weigh against this module's own
 savings, not a cost this module itself introduces.

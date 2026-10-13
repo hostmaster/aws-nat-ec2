@@ -13,7 +13,7 @@ Highlights:
 - Spot capacity by default, with reactive (ASG replacement) and
   proactive (Spot-interruption-warning → Lambda) failover.
 - Spot exhaustion fallback: CloudWatch alarm + Lambda flips the ASG to
-  On-Demand when zero instances stay InService (SPEC §5.4).
+  On-Demand when zero instances stay InService.
 - Optional SNS notifications (BYO topic) for reactive/proactive
   failover and Lambda error/throttle backstop alarms — opt-in, nothing
   created when `sns_topic_arn` is unset.
@@ -21,8 +21,8 @@ Highlights:
 - SSM Session Manager only — no SSH, no key pairs, no bastion host.
 
 Inputs and outputs are documented below. See [SPEC.md](docs/SPEC.md) for the
-full design rationale, IAM permissions (§7.3), and the runnable manual
-verification plan (§13).
+full design rationale, IAM permissions, and the runnable manual
+verification plan.
 
 ## Architecture
 
@@ -86,7 +86,7 @@ inputs = {
 For a second AZ, add a second Terragrunt unit calling this same module
 with that AZ's `public_subnet_id`/`private_route_table_ids` and a
 **distinct `name_prefix`** — this module deliberately has no multi-AZ
-logic of its own (SPEC §3/§4.1). `name_prefix` must be unique per
+logic of its own (see SPEC Non-Goals and Topology). `name_prefix` must be unique per
 module call: unlike the ASG/IAM role/EventBridge rule (which get
 Terraform's own randomized `name_prefix` suffix), the Lambda function
 names, CloudWatch Log Group names, and CloudWatch alarm names are
@@ -114,7 +114,7 @@ sensible default.
 | `spot_fallback_alarm_period_seconds` | `number` | `120` | CloudWatch alarm period for Spot-exhaustion fallback. |
 | `spot_fallback_alarm_evaluation_periods` | `number` | `2` | Consecutive breaching periods before fallback runs. |
 | `eip_allocation_id` | `optional(string)` | `null` | Bring-your-own EIP allocation ID. If `null`, the module allocates a new EIP. |
-| `release_eip_on_destroy` | `bool` | `true` | **Documentation-only — has no Terraform-enforced effect.** `lifecycle` meta-arguments can't reference variables, so no resource reads this value; a normal `terraform destroy` always releases the module-allocated EIP regardless of what it's set to. To actually preserve the EIP across a destroy, run `terraform state rm '<module address>.aws_eip.nat[0]'` before destroying — it becomes unmanaged and must be reimported or released manually afterward. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). See SPEC.md §10. |
+| `release_eip_on_destroy` | `bool` | `true` | **Documentation-only — has no Terraform-enforced effect.** `lifecycle` meta-arguments can't reference variables, so no resource reads this value; a normal `terraform destroy` always releases the module-allocated EIP regardless of what it's set to. To actually preserve the EIP across a destroy, run `terraform state rm '<module address>.aws_eip.nat[0]'` before destroying — it becomes unmanaged and must be reimported or released manually afterward. Ignored if `eip_allocation_id` is supplied (caller owns lifecycle). See SPEC.md (EIP lifecycle). |
 | `allow_inbound_cidrs` | `list(string)` | `[]` | Optional additional ingress CIDRs on the NAT security group, beyond the default (no inbound from the internet). |
 | `tags` | `map(string)` | `{}` | Additional tags applied to all resources. |
 | `sns_topic_arn` | `optional(string)` | `null` | Bring-your-own SNS topic ARN for failover/health notifications. If `null`, no notifications are sent and the module creates no SNS resources. |
